@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Complete offline self-improving ACA loop, aligned with the old 5+5 protocol:
-#   checkpoint -> mine/execute ACA actions -> HDF5 -> 5-epoch fixed-LR stage
-# The initial RUN_DIR must already contain a completed 5% training run.
+# Complete self-improving ACA loop aligned with the old staged protocols:
+#   Reacher: baseline 0->5, replay 5->10, cumulative replay 10->25
+#   Cube:    baseline 0->5, replay 5->10, cumulative replay 10->30
+# The initial RUN_DIR must already contain the completed epoch-5 5% run.
 
 usage() {
-  echo "usage: $0 ENV CFG INITIAL_RUN_DIR SOURCE_H5 ROUNDS rho top_fraction EPISODES.npy [eval_config.yaml] [stage_epochs] [lr]" >&2
+  echo "usage: $0 ENV CFG INITIAL_RUN_DIR SOURCE_H5 ROUNDS rho top_fraction EPISODES.npy [eval_config.yaml] [second_stage_epochs] [lr]" >&2
   echo "  ENV: cube | cube-strict | reacher" >&2
+  echo "  protocol: exactly 2 rounds; Reacher=5+5+15 -> epoch25, Cube=5+5+20 -> epoch30" >&2
   exit 2
 }
 
@@ -21,12 +23,23 @@ rho=${6:-0.2}
 top_fraction=${7:-0.1}
 episode_indices=${8:-}
 eval_config=${9:-}
-stage_epochs=${10:-5}
+second_stage_epochs=${10:-}
 lr=${11:-1e-4}
 
 case "$env_name" in cube|cube-strict|reacher) ;; *) usage ;; esac
 [[ "$rounds" =~ ^[1-9][0-9]*$ ]] || { echo "ROUNDS must be positive" >&2; exit 2; }
-[[ "$stage_epochs" =~ ^[1-9][0-9]*$ ]] || { echo "stage_epochs must be positive" >&2; exit 2; }
+[[ "$rounds" == 2 ]] || { echo "This aligned protocol requires exactly 2 rounds." >&2; exit 2; }
+if [[ "$env_name" == "reacher" ]]; then
+  default_second_stage_epochs=15
+else
+  default_second_stage_epochs=20
+fi
+stage2_epochs=${second_stage_epochs:-$default_second_stage_epochs}
+[[ "$stage2_epochs" =~ ^[1-9][0-9]*$ ]] || { echo "second_stage_epochs must be positive" >&2; exit 2; }
+[[ "$stage2_epochs" == "$default_second_stage_epochs" ]] || {
+  echo "Refusing noncanonical second stage: $env_name requires $default_second_stage_epochs epochs." >&2
+  exit 2
+}
 [[ -d "$initial_run" ]] || { echo "initial run not found: $initial_run" >&2; exit 2; }
 [[ -f "$source_h5" ]] || { echo "source HDF5 not found: $source_h5" >&2; exit 2; }
 [[ -n "$episode_indices" && -f "$episode_indices" ]] || {
@@ -56,6 +69,7 @@ if [[ -f "$run_dir/config.yaml" ]]; then
   fi
 fi
 
+replay_files=()
 for ((round=1; round<=rounds; round++)); do
   checkpoint="$run_dir/checkpoints/last.ckpt"
   [[ -s "$checkpoint" ]] || { echo "missing checkpoint for round $round: $checkpoint" >&2; exit 2; }
@@ -77,11 +91,30 @@ for ((round=1; round<=rounds; round++)); do
   echo "[ACA self-improving] round $round/$rounds: mining from $run_dir"
   "${collector[@]}"
 
+  replay_files+=("$cf")
+  replay="$cf"
+  scheduler_args=(scheduler.enabled=false)
+  if [[ "$round" == 2 ]]; then
+    # Both legacy protocols train on the cumulative two-round replay.  The
+    # Reacher 10->25 stage is the one exception to fixed LR: it uses the old
+    # fresh AdamW + cosine schedule (one warmup step, then decay to zero).
+    union="$run_dir/self_improving_replay_union.h5"
+    python scripts/merge_counterfactuals.py --output "$union" "${replay_files[@]}"
+    replay="$union"
+    if [[ "$env_name" == "reacher" ]]; then
+      scheduler_args=(scheduler.enabled=true +scheduler.warmup_steps_override=1)
+    fi
+    stage_epochs="$stage2_epochs"
+  else
+    # Initial replay adaptation is always the legacy five fresh epochs.
+    stage_epochs=5
+  fi
+
   next_run="$RUNS_ROOT/$(basename "$run_dir")_self_round${round}"
-  echo "[ACA self-improving] round $round/$rounds: fixed-LR ${stage_epochs}-epoch continuation into $next_run"
+  echo "[ACA self-improving] round $round/$rounds: epoch stage ${stage_epochs} into $next_run (replay=$(basename "$replay"))"
   # Old repository protocol: initialize weights from the previous stage,
-  # create a fresh optimizer, keep AdamW lr=1e-4 constant, and disable ACA
-  # during the supervised replay adaptation stage.
+  # create a fresh optimizer, use the stage-specific scheduler above, and
+  # disable ACA during supervised replay adaptation.
   experiments/train/run.sh "$cfg" \
     subdir="$(basename "$next_run")" \
     init_from_checkpoint="$checkpoint" \
@@ -92,7 +125,7 @@ for ((round=1; round<=rounds; round++)); do
     trainer.val_check_interval=1.0 \
     optimizer.type=AdamW \
     optimizer.lr="$lr" \
-    scheduler.enabled=false \
+    "${scheduler_args[@]}" \
     loader.num_workers=0 \
     loader.persistent_workers=false \
     loader.prefetch_factor=null \

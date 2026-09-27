@@ -36,21 +36,27 @@ Strict evaluation uses the manifests under `config/strict_manifests/` and
 losses are intentionally rejected.
 
 The old `self_improving/run.sh` performs one retraining round from an already
-collected HDF5 file. For the complete iterative workflow use
+collected HDF5 file. For the complete two-stage workflow use
 `self_improving/run_loop.sh`:
 
 ```bash
 self_improving/run_loop.sh cube CFG_NAME INITIAL_RUN SOURCE_H5 2 0.2 0.1 EPISODES.npy config/eval/ogbcube.yaml
 ```
 
-Each round mines ACA actions from the current checkpoint, executes them in
-MuJoCo, writes a real-transition HDF5 file, and continues from the previous
-checkpoint via `init_from_checkpoint`. The default stage follows the old 5+5
-protocol: five fresh AdamW epochs at fixed `lr=1e-4`, scheduler off,
-validation every epoch, and ACA disabled during replay adaptation. The round's
-new replay is added to the original 5% dataset; the next round remine starts
-from the updated checkpoint. The episode-index file is mandatory for both
-Reacher and Cube/Cube-strict, so a full `reacher_train.h5` never expands the
-5% mining pool.
+The loop is fixed to the legacy schedules (the `ROUNDS` argument must be `2`):
+
+- Reacher: `5 + 5 + 15 = 25` epochs. The final 15-epoch stage resets AdamW,
+  uses `lr=1e-4` with cosine decay to zero (one warmup step), and trains on
+  the union of both replay rounds.
+- Cube/Cube-strict: `5 + 5 + 20 = 30` epochs. The final 20-epoch stage resets
+  AdamW, uses fixed `lr=1e-4` with scheduler disabled, and trains on the union
+  of both replay rounds.
+
+Every stage initializes model weights from the previous checkpoint via
+`init_from_checkpoint` (optimizer state is intentionally reset); ACA is
+disabled during replay adaptation. Each round mines ACA actions from the
+current checkpoint, executes them in MuJoCo, and writes a real-transition HDF5
+file. The episode-index file is mandatory for both Reacher and Cube/Cube-strict,
+so a full `reacher_train.h5` never expands the 5% mining pool.
 An optional final argument evaluates every new checkpoint with the same
 standard CEM command used by `experiments/eval/run.sh`.
