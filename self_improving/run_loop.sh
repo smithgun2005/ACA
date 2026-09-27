@@ -118,6 +118,7 @@ for ((round=1; round<=rounds; round++)); do
   experiments/train/run.sh "$cfg" \
     subdir="$(basename "$next_run")" \
     init_from_checkpoint="$checkpoint" \
+    resume_from_checkpoint=null \
     data.counterfactual.enabled=true \
     data.counterfactual.path="$cf" \
     data.counterfactual.only=false \
