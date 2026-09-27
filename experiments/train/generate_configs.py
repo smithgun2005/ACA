@@ -73,6 +73,8 @@ def main():
         name = f"{a.env}_{a.subset}_{method}"
         action_dim = 5 if profile_env == "cube" else 2
         text = f'''defaults:\n  - /train/base\n  - /train/data/{data_name}\n  - _self_\n\nhydra:\n  searchpath:\n    - file://{ROOT}/config\n\nseed: 0\nsubdir: {name}\nartifacts:\n  embedding_subset_size: 4096\ntrainer:\n  max_epochs: {epochs}\n  devices: 1\n  accelerator: gpu\n  precision: bf16\nloader:\n  batch_size: 256\noptimizer:\n  lr: 1e-4\n  weight_decay: 1e-3\nscheduler:\n  enabled: true\n  warmup_steps_override: 0\nwandb:\n  enabled: false\nvalidation_monitoring:\n  enabled: false\ndata:\n  dataset:\n    num_steps: 2\nwm:\n  action_dim: {action_dim}\nloss:\n  sigreg:\n    weight: {0.09 if sig else 0.0}\n  inverse:\n    weight: {inverse_weight if inv else 0.0}\n  aca:\n    weight: {aca_weight if aca else 0.0}\n    rho: {aca_rho}\n    margin: 0.0\n    mode: gradient\n    adversary: gradient\n    noise_scale: 0.0\n    encoder_scale: none\n    online:\n      enabled: false\n    epoch_active:\n      enabled: false\n'''
+        text = text.replace("  precision: bf16\n", "  precision: bf16\n  val_check_interval: 1.0\n")
+        text = text.replace("scheduler:\n  enabled: true\n  warmup_steps_override: 0", "scheduler:\n  enabled: false")
         (a.output / f"{name}.yaml").write_text(text)
         print(a.output / f"{name}.yaml")
 
