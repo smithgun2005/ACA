@@ -45,8 +45,11 @@ self_improving/run_loop.sh cube CFG_NAME INITIAL_RUN SOURCE_H5 2 0.2 0.1 EPISODE
 
 Each round mines ACA actions from the current checkpoint, executes them in
 MuJoCo, writes a real-transition HDF5 file, and continues from the previous
-checkpoint via `init_from_checkpoint` while training on the base data plus the
-newly collected transitions. The episode-index file is mandatory for both
+checkpoint via `init_from_checkpoint`. The default stage follows the old 5+5
+protocol: five fresh AdamW epochs at fixed `lr=1e-4`, scheduler off,
+validation every epoch, and ACA disabled during replay adaptation. The round's
+new replay is added to the original 5% dataset; the next round remine starts
+from the updated checkpoint. The episode-index file is mandatory for both
 Reacher and Cube/Cube-strict, so a full `reacher_train.h5` never expands the
 5% mining pool.
 An optional final argument evaluates every new checkpoint with the same
