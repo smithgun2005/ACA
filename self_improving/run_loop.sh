@@ -120,7 +120,7 @@ for ((round=1; round<=rounds; round++)); do
     init_from_checkpoint="$checkpoint" \
     resume_from_checkpoint=null \
     data.counterfactual.enabled=true \
-    data.counterfactual.path="$cf" \
+    data.counterfactual.path="$replay" \
     data.counterfactual.only=false \
     trainer.max_epochs="$stage_epochs" \
     trainer.val_check_interval=1.0 \
