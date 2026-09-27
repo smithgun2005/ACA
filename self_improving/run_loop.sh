@@ -96,14 +96,11 @@ for ((round=1; round<=rounds; round++)); do
   scheduler_args=(scheduler.enabled=false)
   if [[ "$round" == 2 ]]; then
     # Both legacy protocols train on the cumulative two-round replay.  The
-    # Reacher 10->25 stage is the one exception to fixed LR: it uses the old
-    # fresh AdamW + cosine schedule (one warmup step, then decay to zero).
+    # Both environments keep the legacy fixed learning rate in the final
+    # stage as well: fresh AdamW at 1e-4 with the scheduler disabled.
     union="$run_dir/self_improving_replay_union.h5"
     python scripts/merge_counterfactuals.py --output "$union" "${replay_files[@]}"
     replay="$union"
-    if [[ "$env_name" == "reacher" ]]; then
-      scheduler_args=(scheduler.enabled=true +scheduler.warmup_steps_override=1)
-    fi
     stage_epochs="$stage2_epochs"
   else
     # Initial replay adaptation is always the legacy five fresh epochs.

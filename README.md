@@ -46,8 +46,8 @@ self_improving/run_loop.sh cube CFG_NAME INITIAL_RUN SOURCE_H5 2 0.2 0.1 EPISODE
 The loop is fixed to the legacy schedules (the `ROUNDS` argument must be `2`):
 
 - Reacher: `5 + 5 + 15 = 25` epochs. The final 15-epoch stage resets AdamW,
-  uses `lr=1e-4` with cosine decay to zero (one warmup step), and trains on
-  the union of both replay rounds.
+  uses a constant `lr=1e-4` with scheduler disabled, and trains on the union
+  of both replay rounds.
 - Cube/Cube-strict: `5 + 5 + 20 = 30` epochs. The final 20-epoch stage resets
   AdamW, uses fixed `lr=1e-4` with scheduler disabled, and trains on the union
   of both replay rounds.
