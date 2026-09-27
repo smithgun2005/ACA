@@ -44,8 +44,10 @@ self_improving/run_loop.sh cube CFG_NAME INITIAL_RUN SOURCE_H5 2 0.2 0.1 EPISODE
 ```
 
 Each round mines ACA actions from the current checkpoint, executes them in
-MuJoCo, writes a real-transition HDF5 file, and retrains on the base data plus
-the newly collected transitions. Reacher does not need the episode-index file;
-Cube and Cube-strict require it to define the permitted 5%/strict source pool.
+MuJoCo, writes a real-transition HDF5 file, and continues from the previous
+checkpoint via `init_from_checkpoint` while training on the base data plus the
+newly collected transitions. The episode-index file is mandatory for both
+Reacher and Cube/Cube-strict, so a full `reacher_train.h5` never expands the
+5% mining pool.
 An optional final argument evaluates every new checkpoint with the same
 standard CEM command used by `experiments/eval/run.sh`.

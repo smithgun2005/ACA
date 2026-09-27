@@ -6,12 +6,12 @@ set -euo pipefail
 # The initial RUN_DIR must already contain a completed 5% training run.
 
 usage() {
-  echo "usage: $0 ENV CFG INITIAL_RUN_DIR SOURCE_H5 ROUNDS [rho] [top_fraction] [episode_indices.npy] [eval_config.yaml]" >&2
+  echo "usage: $0 ENV CFG INITIAL_RUN_DIR SOURCE_H5 ROUNDS rho top_fraction EPISODES.npy [eval_config.yaml]" >&2
   echo "  ENV: cube | cube-strict | reacher" >&2
   exit 2
 }
 
-[[ $# -ge 5 ]] || usage
+[[ $# -ge 8 ]] || usage
 env_name=$1
 cfg=$2
 initial_run=$3
@@ -26,6 +26,10 @@ case "$env_name" in cube|cube-strict|reacher) ;; *) usage ;; esac
 [[ "$rounds" =~ ^[1-9][0-9]*$ ]] || { echo "ROUNDS must be positive" >&2; exit 2; }
 [[ -d "$initial_run" ]] || { echo "initial run not found: $initial_run" >&2; exit 2; }
 [[ -f "$source_h5" ]] || { echo "source HDF5 not found: $source_h5" >&2; exit 2; }
+[[ -n "$episode_indices" && -f "$episode_indices" ]] || {
+  echo "EPISODES.npy is required for both Cube and Reacher so mining stays inside the 5% pool." >&2
+  exit 2
+}
 
 cd "$(dirname "$0")/.."
 root=$PWD
@@ -33,6 +37,8 @@ export REPO_ROOT="$root"
 export ACA_DATA_ROOT="${ACA_DATA_ROOT:-$root/data/generated}"
 run_dir=$(readlink -f "$initial_run")
 source_h5=$(readlink -f "$source_h5")
+episode_indices=$(readlink -f "$episode_indices")
+export RUNS_ROOT="$(dirname "$run_dir")"
 
 if [[ -f "$run_dir/config.yaml" ]]; then
   if ! grep -A8 -Eq '^[[:space:]]*aca:' "$run_dir/config.yaml" || \
@@ -43,6 +49,8 @@ if [[ -f "$run_dir/config.yaml" ]]; then
 fi
 
 for ((round=1; round<=rounds; round++)); do
+  checkpoint="$run_dir/checkpoints/last.ckpt"
+  [[ -s "$checkpoint" ]] || { echo "missing checkpoint for round $round: $checkpoint" >&2; exit 2; }
   out_dir="$run_dir/self_improving_round${round}"
   cf="$out_dir/aca_counterfactual.h5"
   mkdir -p "$out_dir"
@@ -50,17 +58,13 @@ for ((round=1; round<=rounds; round++)); do
   if [[ "$env_name" == "reacher" ]]; then
     collector=(python scripts/collect_reacher_aca_counterfactuals.py
       --run-dir "$run_dir" --source "$source_h5" --output "$cf"
-      --rho "$rho" --top-fraction "$top_fraction")
+      --rho "$rho" --top-fraction "$top_fraction"
+      --episode-indices "$episode_indices")
   else
     collector=(python scripts/collect_cube_aca_counterfactuals.py
       --run-dir "$run_dir" --source "$source_h5" --output "$cf"
       --rho "$rho" --top-fraction "$top_fraction")
-    if [[ -n "$episode_indices" ]]; then
-      collector+=(--episode-indices "$episode_indices")
-    else
-      echo "Cube self-improving requires an episode_indices.npy file (8th argument)." >&2
-      exit 2
-    fi
+    collector+=(--episode-indices "$episode_indices")
   fi
   echo "[ACA self-improving] round $round/$rounds: mining from $run_dir"
   "${collector[@]}"
@@ -72,10 +76,11 @@ for ((round=1; round<=rounds; round++)); do
     python scripts/merge_counterfactuals.py --output "$union_cf" "$union_prev" "$cf"
   fi
 
-  next_run="${run_dir}_self_round${round}"
+  next_run="$RUNS_ROOT/$(basename "$run_dir")_self_round${round}"
   echo "[ACA self-improving] round $round/$rounds: retraining union into $next_run"
   experiments/train/run.sh "$cfg" \
-    subdir="$next_run" \
+    subdir="$(basename "$next_run")" \
+    init_from_checkpoint="$checkpoint" \
     data.counterfactual.enabled=true \
     data.counterfactual.path="$union_cf" \
     data.counterfactual.only=false
