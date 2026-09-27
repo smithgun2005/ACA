@@ -1,0 +1,35 @@
+defaults:
+  - /eval/base
+  - _self_
+
+hydra:
+  searchpath:
+    - file://${oc.env:REPO_ROOT}/config
+
+world:
+  env_name: swm/TwoRoom-v1
+  frame_skip: 1
+
+dataset:
+  keys_to_cache:
+    - action
+    - proprio
+    - pos_agent
+    - pos_target
+
+# Conventional 25-step task offset with exactly two 25-step planning budgets.
+eval:
+  dataset_name: tworoom_eval
+  # The HF TwoRoom release stores environment state under `pos_agent` and
+  # `pos_target` (rather than the generic `state` / `goal_state` names used
+  # by Push-T).  Restore both after seed reset so the env's success condition
+  # and the dataset goal image refer to the same target.
+  callables:
+    - method: _set_state
+      args:
+        state:
+          value: pos_agent
+    - method: _set_goal_state
+      args:
+        goal_state:
+          value: goal_pos_agent

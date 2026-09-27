@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+*.ckpt
+*.pth
+*.pt
+*.h5
+*.hdf5
+*.log
+results/
+outputs/
+wandb/
+.env
+
+# Keep the small checked-in 5% episode-index files under data/generated.
+data/generated/**/*.h5

@@ -1,0 +1,40 @@
+# @package _global_
+defaults:
+  - /eval/base
+  - _self_
+hydra:
+  searchpath:
+    - file://${oc.env:REPO_ROOT}/config
+
+world:
+  env_name: swm/OGBCube-v0
+  env_type: single
+  ob_type: states
+  multiview: False
+  width: 224
+  height: 224
+  visualize_info: False
+  terminate_at_goal: True
+
+dataset:
+  keys_to_cache:
+    - action
+
+eval:
+  dataset_name: cube_single_expert_eval
+  callables:
+    - method: set_state
+      args:
+        qpos:
+          value: qpos
+        qvel:
+          value: qvel
+    - method: set_target_pos
+      args:
+        cube_id:
+          value: 0
+          in_dataset: False
+        target_pos:
+          value: goal_privileged_block_0_pos
+        target_quat:
+          value: goal_privileged_block_0_quat
