@@ -301,8 +301,6 @@ def evaluate_run(run, cfg, out_dir: Path, dataset, episodes, start_steps):
             "goal": img_transform(cfg["eval"]["img_size"]),
         }
         solver = build_solver(cfg, model)
-        if "action" in process:
-            solver.set_action_normalizer(process["action"].mean_, process["action"].scale_)
         policy = swm.policy.WorldModelPolicy(
             solver=solver,
             config=swm.PlanConfig(**cfg["plan_config"]),
