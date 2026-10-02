@@ -11,19 +11,17 @@ HDF5 files. The package includes default 5% episode-index files under
 `CUBE_SUBSET_INDICES`, `REACHER_SUBSET_INDICES`, `PUSHT_SUBSET_INDICES` and
 `TWOROOM_SUBSET_INDICES`.
 
-Generate a training config, then run it:
+Generate the canonical full-dataset sweep configs:
 
 ```bash
-python experiments/train/generate_configs.py --env cube --subset 5pct
-experiments/train/run.sh cube_5pct_inv_aca
+python experiments/train/generate_configs.py
 ```
 
-The generator uses the established database-specific protocol values rather
-than one shared default: Cube (full SIG+ACA `.05/1.5`, Inv+ACA `.1/1.5`),
-Reacher (`.5/1` and `.05/1.5`), PushT (`.25/1.5`), and TwoRoom (`.05/1` and
-`.25/1`). The 5% schedules use 10/20/40/20 epochs for Cube/Reacher/PushT/
-TwoRoom respectively. `--aca-rho`, `--aca-weight`, `--epochs`, and
-`--inverse-weight` are available for an explicitly documented override.
+The launchers are listed in `experiments/SWEEP_SCRIPTS.md`. Every Cube,
+Reacher, PushT, and TwoRoom objective uses a baseline plus ACA weight `1` at
+rho `0.05`, `0.1`, `0.25`, and `0.5`, with training seed `0` and zero ACA
+direction noise. Both INV and SIG objectives are covered, and each launcher
+automatically evaluates after training.
 
 Run evaluation with an environment config:
 
@@ -53,8 +51,10 @@ The loop is fixed to the legacy schedules (the `ROUNDS` argument must be `2`):
   of both replay rounds.
 
 Every stage initializes model weights from the previous checkpoint via
-`init_from_checkpoint` (optimizer state is intentionally reset); ACA is
-disabled during replay adaptation. Each round mines ACA actions from the
+`init_from_checkpoint` (optimizer state is intentionally reset). In the
+controlled self-improving experiment, all stages use fixed `lr=1e-4`, the
+same loader worker settings, and no ACA training loss; ACA is used only to
+mine actions for real-environment replay. Each round mines ACA actions from the
 current checkpoint, executes them in MuJoCo, and writes a real-transition HDF5
 file. The episode-index file is mandatory for both Reacher and Cube/Cube-strict,
 so a full `reacher_train.h5` never expands the 5% mining pool.

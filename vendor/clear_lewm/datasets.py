@@ -42,8 +42,8 @@ def split_episode_ids(
     unique = np.unique(episode_ids)
     if heldout_fraction <= 0:
         return unique, np.empty(0, dtype=unique.dtype)
-    if not 0.0 < heldout_fraction < 1.0:
-        raise ValueError("heldout_fraction must be in [0, 1)")
+    if not 0.0 < heldout_fraction <= 1.0:
+        raise ValueError("heldout_fraction must be in [0, 1]")
 
     scores = []
     for episode in unique:

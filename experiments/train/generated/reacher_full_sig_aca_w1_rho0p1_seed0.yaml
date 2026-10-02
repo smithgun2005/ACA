@@ -1,0 +1,54 @@
+defaults:
+  - /train/base
+  - /train/data/reacher
+  - _self_
+
+hydra:
+  searchpath:
+    - file://${oc.env:REPO_ROOT}/config
+
+seed: 0
+subdir: reacher_full_sig_aca_w1_rho0p1_seed0
+artifacts:
+  embedding_subset_size: 4096
+trainer:
+  max_epochs: 10
+  devices: 1
+  accelerator: gpu
+  precision: bf16
+  val_check_interval: 1.0
+loader:
+  batch_size: 256
+optimizer:
+  lr: 1e-4
+  weight_decay: 1e-3
+scheduler:
+  enabled: true
+  warmup_steps_override: 1
+wandb:
+  enabled: false
+validation_monitoring:
+  enabled: false
+data:
+  dataset:
+    num_steps: 2
+    cache_dir: ${oc.env:EXTERNAL_DATA_ROOT,/root/autodl-tmp/sensorimotor-world-model/planning/data/external}
+wm:
+  action_dim: 2
+loss:
+  sigreg:
+    weight: 0.09
+  inverse:
+    weight: 0.0
+  aca:
+    weight: 1.0
+    rho: 0.1
+    margin: 0.0
+    mode: gradient
+    adversary: gradient
+    noise_scale: 0.0
+    encoder_scale: none
+    online:
+      enabled: false
+    epoch_active:
+      enabled: false

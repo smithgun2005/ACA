@@ -1,18 +1,18 @@
 defaults:
   - /train/base
-  - /train/data/tworoom5pct
+  - /train/data/ogbcube
   - _self_
 
 hydra:
   searchpath:
-    - file:///root/autodl-tmp/ACA/config
+    - file://${oc.env:REPO_ROOT}/config
 
 seed: 0
-subdir: tworoom_5pct_inv_aca
+subdir: cube_full_sig_aca_w1_rho0p25_seed0
 artifacts:
   embedding_subset_size: 4096
 trainer:
-  max_epochs: 20
+  max_epochs: 10
   devices: 1
   accelerator: gpu
   precision: bf16
@@ -23,7 +23,8 @@ optimizer:
   lr: 1e-4
   weight_decay: 1e-3
 scheduler:
-  enabled: false
+  enabled: true
+  warmup_steps_override: 1
 wandb:
   enabled: false
 validation_monitoring:
@@ -31,19 +32,17 @@ validation_monitoring:
 data:
   dataset:
     num_steps: 2
-    cache_dir: /root/autodl-tmp/sensorimotor-world-model/planning/data/external
-  subset:
-    episode_indices: /root/autodl-tmp/ACA/data/generated/tworoom_5pct/tworoom5pct_train_episodes.npy
+    cache_dir: ${oc.env:EXTERNAL_DATA_ROOT,/root/autodl-tmp/sensorimotor-world-model/planning/data/external}
 wm:
-  action_dim: 2
+  action_dim: 5
 loss:
   sigreg:
-    weight: 0.0
+    weight: 0.09
   inverse:
-    weight: 0.1
+    weight: 0.0
   aca:
     weight: 1.0
-    rho: 0.1
+    rho: 0.25
     margin: 0.0
     mode: gradient
     adversary: gradient

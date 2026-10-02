@@ -46,8 +46,8 @@ def configure_import_paths(
             )
         _set_path_priority(runtime, first=True)
 
-    # The upstream root is needed for source-tree installs of stable-worldmodel,
-    # but legacy top-level files such as module.py must remain fallback imports.
+
+
     _set_path_priority(upstream, first=False)
     importlib.invalidate_caches()
     return {

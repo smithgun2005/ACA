@@ -34,8 +34,8 @@ class PredictiveMaskPolicy(nn.Module):
         if float(temperature) <= 0:
             raise ValueError("mask-policy temperature must be positive")
         generator = torch.Generator(device="cpu").manual_seed(int(base_seed))
-        # A small fixed random ordering prevents an all-zero initial residual
-        # from deterministically masking the top-left part of every image.
+
+
         self.register_buffer(
             "base_scores", torch.rand(int(num_patches), generator=generator) - 0.5
         )
@@ -47,8 +47,8 @@ class PredictiveMaskPolicy(nn.Module):
             nn.GELU(),
             nn.Linear(int(hidden_dim), int(num_patches)),
         )
-        # Start at the fixed base policy. The final layer still immediately
-        # receives an ST gradient, and subsequent steps train the whole MLP.
+
+
         nn.init.zeros_(self.net[-1].weight)
         nn.init.zeros_(self.net[-1].bias)
 
@@ -67,16 +67,16 @@ class PredictiveMaskPolicy(nn.Module):
             raise ValueError(
                 f"num_masked must be in (0, {self.num_patches}), got {num_masked}"
             )
-        # Keep the threshold solve in fp32 even under bf16 mixed precision:
-        # a 256-way fixed-budget sigmoid is otherwise quantized too coarsely.
+
+
         scores = self.scores(state_features).float()
         hard = torch.zeros_like(scores)
         indices = scores.topk(int(num_masked), dim=-1).indices
         hard.scatter_(-1, indices, 1.0)
 
-        # Solve sum_i sigmoid((u_i-kappa)/tau)=K. Bounds are detached only to
-        # avoid making the control flow part of the estimator; the selected
-        # bisection midpoints retain their pathwise score derivative.
+
+
+
         lower = scores.detach().amin(dim=-1, keepdim=True) - 20.0 * self.temperature
         upper = scores.detach().amax(dim=-1, keepdim=True) + 20.0 * self.temperature
         target = float(num_masked)
@@ -324,8 +324,8 @@ class ARPredictor(nn.Module):
             block_class=ConditionalBlock,
         )
 
-        # This training-only nuisance estimator is opt-in, so ordinary LeWM
-        # checkpoints/configurations retain their exact parameter set.
+
+
         if self.aig_enabled:
             if action_dim is None or int(action_dim) <= 0:
                 raise ValueError("AIG ARPredictor requires a positive action_dim")
@@ -401,11 +401,11 @@ class EndpointConditionalBlock(ConditionalBlock):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Vanilla AdaLN-zero is appropriate when a visible input token can
-        # provide an identity path.  Here the supervised output is a MASK
-        # slot, so zero gates would initially make it independent of both the
-        # known endpoint and action.  A small non-zero start opens that route
-        # from the first update without changing the shared architecture.
+
+
+
+
+
         nn.init.normal_(self.adaLN_modulation[-1].weight, std=0.02)
         nn.init.zeros_(self.adaLN_modulation[-1].bias)
 
@@ -482,7 +482,7 @@ class MaskedTransitionPredictor(nn.Module):
         self.action_in = nn.Linear(self.action_dim, self.input_dim)
         self.future_mask = nn.Parameter(torch.randn(1, 1, self.input_dim) * 0.02)
         self.action_mask = nn.Parameter(torch.randn(1, 1, self.input_dim) * 0.02)
-        # Slot types are current-state, future-state, action, respectively.
+
         self.type_embedding = nn.Parameter(torch.randn(1, 3, self.input_dim) * 0.02)
         self.dropout = nn.Dropout(emb_dropout)
         self.transformer = Transformer(
@@ -519,7 +519,7 @@ class MaskedTransitionPredictor(nn.Module):
         return self.action_out(self._run(z_t, z_next, action_mask)[:, 2:3])
 
     def forward(self, x, action, c_reference=None, use_aig=False):
-        # Preserve JEPA's ordinary forward-model interface for CEM rollouts.
+
         if c_reference is not None or use_aig:
             raise ValueError("AIG is only defined for the original AR AdaLN predictor")
         return self.complete_future(x, action)
@@ -654,7 +654,7 @@ class CAFEPredictor(nn.Module):
         self.drift_head = nn.Linear(hidden_dim, self.output_dim)
         self.tangent_head = nn.Linear(hidden_dim, self.output_dim * self.action_dim)
         nn.init.zeros_(self.drift_head.bias)
-        # Avoid the epsilon guard at initialization.
+
         nn.init.normal_(self.tangent_head.weight, std=0.02)
         nn.init.normal_(self.tangent_head.bias, std=0.02)
 
@@ -747,7 +747,7 @@ class LAFPredictor(nn.Module):
                 f"expected {inferred_repeat}, got {self.action_repeat}"
             )
 
-        # PlainBlock has no conditioning path: G is strictly a function of z.
+
         self.trunk = Transformer(
             self.input_dim,
             hidden_dim,
@@ -763,7 +763,7 @@ class LAFPredictor(nn.Module):
         self.field_head = nn.Linear(
             hidden_dim, self.output_dim * self.physical_action_dim
         )
-        # QR of an all-zero frame is degenerate; use a small non-zero start.
+
         nn.init.normal_(self.field_head.weight, std=0.02)
         nn.init.normal_(self.field_head.bias, std=0.02)
 
@@ -887,15 +887,15 @@ class EndpointCompletionPredictor(nn.Module):
             )
         direction = self._direction_mask(forward, known)
         b, t, _ = known.shape
-        # Transformer/Attention operates on ``(batch, slots, dim)``.  The
-        # temporal leading axis contains independent training transitions, so
-        # flatten it into the batch axis and retain exactly two endpoint slots.
+
+
+
         known_flat = known.reshape(b * t, self.input_dim)
         action_flat = action.reshape(b * t, action.shape[-1])
         direction_flat = direction.reshape(b * t)
         mask = self.mask_token.expand(b * t, -1, -1).squeeze(-2)
-        # Slot 0 is z_t and slot 1 is z_{t+1}.  ``direction=True`` therefore
-        # places the known state at slot 0 and reads the prediction from slot 1.
+
+
         slots = torch.stack((
             torch.where(direction_flat.unsqueeze(-1), known_flat, mask),
             torch.where(direction_flat.unsqueeze(-1), mask, known_flat),
@@ -909,8 +909,8 @@ class EndpointCompletionPredictor(nn.Module):
         return outputs.gather(-2, output_slot).squeeze(-2).reshape(b, t, self.output_dim)
 
     def forward(self, x, action):
-        # Preserve the normal world-model API for rollouts and CEM: it is the
-        # forward completion endpoint by default.
+
+
         return self.complete(x, action, forward=True)
 
 
@@ -1012,8 +1012,8 @@ class ActionCorrector(nn.Module):
             layers.extend([nn.Linear(int(mlp_dim), int(mlp_dim)), nn.SiLU()])
         layers.append(nn.Linear(int(mlp_dim), action_dim))
         self.net = nn.Sequential(*layers)
-        # A zero initial vector field preserves the candidate action exactly;
-        # this is a useful safe starting point for post-hoc planning.
+
+
         nn.init.zeros_(self.net[-1].weight)
         nn.init.zeros_(self.net[-1].bias)
 
@@ -1076,8 +1076,8 @@ class PlanToActResidualCalibrator(nn.Module):
             layers.extend([nn.Linear(mlp_dim, mlp_dim), nn.SiLU()])
         layers.append(nn.Linear(mlp_dim, action_dim))
         self.net = nn.Sequential(*layers)
-        # The untrained transport is exactly identity, making the artifact
-        # safe to attach before any PARC optimization has happened.
+
+
         nn.init.zeros_(self.net[-1].weight)
         nn.init.zeros_(self.net[-1].bias)
 
@@ -1135,8 +1135,8 @@ class ActionResidualFWM(nn.Module):
         return self.net(torch.cat(features, dim=-1))
 
     def forward(self, z_t, action, base_prediction=None):
-        # The same frozen base prediction conditions both terms: only an
-        # action-dependent response can survive this difference.
+
+
         return self.raw(z_t, action, base_prediction) - self.raw(
             z_t, torch.zeros_like(action), base_prediction
         )
@@ -1272,8 +1272,8 @@ class PlanActionCorrector(nn.Module):
             layers.extend([nn.Linear(mlp_dim, mlp_dim), nn.SiLU()])
         layers.append(nn.Linear(mlp_dim, plan_dim))
         self.net = nn.Sequential(*layers)
-        # The original CEM plan is a safe initial output before the corrector
-        # receives supervision; do not inject a random post-hoc vector field.
+
+
         nn.init.zeros_(self.net[-1].weight)
         nn.init.zeros_(self.net[-1].bias)
 
@@ -1402,7 +1402,7 @@ class IIPDCHead(nn.Module):
         action:    (..., action_dim) - the logged action a_t.
         Returns the scalar II-PDC loss.
         """
-        Q = _orthonormal_frame(self.M)  # (D, action_dim), Q^T Q = I
+        Q = _orthonormal_frame(self.M)
         innovation = pred - blind_ref.detach()
         action_transport = action.float() @ Q.T
         return F.mse_loss(innovation.float(), action_transport)
@@ -1448,8 +1448,8 @@ class ASPDCHead(nn.Module):
         super().__init__()
         self.embed_dim = int(embed_dim)
         self.action_dim = int(action_dim)
-        # Free parameter of shape (d, m); QR gives Qf with Qf^T Qf = I_m, and
-        # we use Q = Qf^T (m, d) so that Q Q^T = I_m.
+
+
         self.M = nn.Parameter(torch.randn(self.embed_dim, self.action_dim))
 
     def forward(self, z_next, cf_pred, action, action_cf):
@@ -1460,9 +1460,9 @@ class ASPDCHead(nn.Module):
         action_cf: (..., action_dim) - normalized counterfactual action a_cf.
         Returns the scalar AS-PDC loss.
         """
-        Qf = _orthonormal_frame(self.M)   # (D, m), Qf^T Qf = I_m
-        d_act = z_next - cf_pred          # latent secant
-        latent_delta = d_act.float() @ Qf   # = Q d_act, (..., m)
+        Qf = _orthonormal_frame(self.M)
+        d_act = z_next - cf_pred
+        latent_delta = d_act.float() @ Qf
         action_delta = (action - action_cf).float()
         return F.mse_loss(latent_delta, action_delta)
 
@@ -1516,8 +1516,8 @@ def _sample_probe(embed_dim: int, k: int, device, dtype) -> torch.Tensor:
         return torch.eye(embed_dim, device=device, dtype=dtype)
     with torch.no_grad():
         M = torch.randn(embed_dim, k, device=device, dtype=torch.float32)
-        Q_cols, _ = torch.linalg.qr(M, mode="reduced")  # Q_cols^T Q_cols = I_k
-        Q = Q_cols.T.contiguous() * (embed_dim / k) ** 0.5  # (k, embed_dim)
+        Q_cols, _ = torch.linalg.qr(M, mode="reduced")
+        Q = Q_cols.T.contiguous() * (embed_dim / k) ** 0.5
     return Q.to(dtype)
 
 
@@ -1589,9 +1589,9 @@ class PDCHead(torch.nn.Module):
         self.embed_dim = int(embed_dim)
         self.k = int(k)
         self.perp_weight = float(perp_weight)
-        # None (default) = never resample, i.e. the original permanently-frozen
-        # Q behavior. Periodic resampling regressed planning success in
-        # practice (Reacher weight=0.1: 63.3% -> 18.0%), so it's opt-in only.
+
+
+
         self.resample_every = int(resample_every) if resample_every else None
         generator = torch.Generator()
         if seed is not None:
@@ -1602,8 +1602,8 @@ class PDCHead(torch.nn.Module):
         self.register_buffer("R", R)
 
         M = torch.randn(embed_dim, self.k, generator=generator)
-        Q_cols, _ = torch.linalg.qr(M, mode="reduced")  # Q_cols^T Q_cols = I_k
-        self.register_buffer("Q", Q_cols.T.contiguous())  # (k, embed_dim), Q Q^T = I_k
+        Q_cols, _ = torch.linalg.qr(M, mode="reduced")
+        self.register_buffer("Q", Q_cols.T.contiguous())
         self.register_buffer("_step", torch.zeros((), dtype=torch.long))
 
     def _resample_Q(self):
@@ -1634,10 +1634,10 @@ class PDCHead(torch.nn.Module):
         loss = F.mse_loss(r_hat, r)
 
         if self.perp_weight and self.embed_dim > self.k:
-            # dz_parallel = Q^T Q delta_z (idempotent projector onto Q's row
-            # space); dz_perp is what's left in the (d-k)-dim orthogonal
-            # complement, i.e. exactly the null-space slack plain PDC leaves
-            # unconstrained.
+
+
+
+
             dz_parallel = torch.einsum("btk,kd->btd", r_hat, self.Q)
             dz_perp = delta_z - dz_parallel
             loss_perp = dz_perp.pow(2).sum(dim=-1).mean() / (self.embed_dim - self.k)
@@ -1714,8 +1714,8 @@ class GeoPDCHead(torch.nn.Module):
         self.register_buffer("R", R)
 
         M = torch.randn(embed_dim, self.k, generator=generator)
-        Q_cols, _ = torch.linalg.qr(M, mode="reduced")  # Q_cols^T Q_cols = I_k
-        self.register_buffer("Q", Q_cols.T.contiguous())  # (k, embed_dim)
+        Q_cols, _ = torch.linalg.qr(M, mode="reduced")
+        self.register_buffer("Q", Q_cols.T.contiguous())
 
     def forward(self, z, x):
         """
@@ -1831,8 +1831,8 @@ class DeltaLiftHead(torch.nn.Module):
         self.register_buffer("R", R)
 
         M = torch.randn(embed_dim, self.k, generator=generator)
-        Q_cols, _ = torch.linalg.qr(M, mode="reduced")  # Q_cols^T Q_cols = I_k
-        self.register_buffer("Q", Q_cols.T.contiguous())  # (k, embed_dim), Q Q^T = I_k
+        Q_cols, _ = torch.linalg.qr(M, mode="reduced")
+        self.register_buffer("Q", Q_cols.T.contiguous())
 
     def forward(self, z, x):
         """

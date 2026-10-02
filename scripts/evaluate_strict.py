@@ -19,12 +19,12 @@ from pathlib import Path
 
 os.environ.setdefault("MUJOCO_GL", "egl")
 
-# MuJoCo's EGL finalizer may run after EGL has already released its display
-# (especially when several evaluator processes share one GPU).  In that case
-# ``GLContext.__del__`` emits noisy ``EGL_NOT_INITIALIZED`` tracebacks even
-# though the rollout and result file completed successfully.  Make context
-# destruction idempotent and quiet at interpreter shutdown; runtime rendering
-# errors are still raised by the normal code paths.
+
+
+
+
+
+
 try:
     import mujoco.egl as _mujoco_egl
 
@@ -35,8 +35,8 @@ try:
             try:
                 _egl_free_original(self)
             except Exception:
-                # EGL may already be torn down during Python finalization.
-                # Dropping the handle prevents repeated destructor warnings.
+
+
                 pass
             finally:
                 self._context = None
@@ -44,7 +44,7 @@ try:
         _clear_lewm_safe_free._clear_lewm_safe = True
         _mujoco_egl.GLContext.free = _clear_lewm_safe_free
 except Exception:
-    # Headless/runtime setup will report any genuine import failure later.
+
     pass
 
 import numpy as np
@@ -55,15 +55,15 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CLEAR_ROOT = ROOT / "vendor"
 sys.path.insert(0, str(ROOT))
 
-from eval import (  # noqa: E402
+from eval import (
     build_solver,
     build_world,
     fit_processors,
     img_transform,
     load_jepa_from_run,
 )
-from utils import load_composed_config  # noqa: E402
-import stable_worldmodel as swm  # noqa: E402
+from utils import load_composed_config
+import stable_worldmodel as swm
 
 
 def parse_args():
@@ -104,6 +104,16 @@ def main():
 
     manifest = load_manifest(args.manifest)
     task = normalize_task(manifest["task"])
+    if task == "tworoom":
+        heldout_fraction = float(manifest["protocol"].get("heldout_fraction", 0.0))
+        if manifest.get("split") != "heldout" or heldout_fraction <= 0.0:
+            raise ValueError(
+                "TwoRoom strict evaluation requires a held-out-only manifest"
+            )
+        if args.dataset_path.name != "tworoom_eval.h5":
+            raise ValueError(
+                "TwoRoom strict evaluation must use the pre-split tworoom_eval.h5"
+            )
     expected = manifest["dataset"]["fingerprint"]
     if expected["kind"] != "metadata-sha256":
         raise ValueError("only CLEAR metadata-sha256 manifests are supported")
@@ -114,22 +124,22 @@ def main():
     if int(protocol.goal_offset) <= 0:
         raise ValueError("manifest goal offset must be positive")
 
-    # The repository eval YAML uses environment interpolations for its seed/run
-    # fields; provide them locally before composing it.
+
+
     os.environ["PLANNER_SEED"] = str(args.planner_seed)
     os.environ["PLANNER_NAME"] = "clear_lightning"
-    # The planning YAML uses these interpolations for its single run entry.
-    # Keep MODEL_RUN_DIR as the canonical name (EVAL_RUN_DIR was an older
-    # adapter-only variable and leaves OmegaConf unable to resolve runs[0]).
+
+
+
     os.environ["MODEL_RUN_DIR"] = str(args.run_dir)
     os.environ["EVAL_RUN_DIR"] = str(args.run_dir)
     os.environ.setdefault("REPO_ROOT", str(ROOT))
 
-    # Reuse the normal planning evaluator's architecture, transforms, CEM and
-    # data standardization.  Only its random task sampler is replaced.
-    # Resolve the planning YAML's Hydra defaults exactly as the repository's
-    # normal evaluator does; a raw OmegaConf.load would omit /eval/base and
-    # /eval/env/ogbcube fields.
+
+
+
+
+
     cfg_node = load_composed_config(args.eval_config)
     OmegaConf.set_struct(cfg_node, False)
     cfg_node.seed = args.planner_seed
@@ -144,9 +154,9 @@ def main():
     cfg = OmegaConf.to_container(cfg_node, resolve=True)
     np.random.seed(args.planner_seed); torch.manual_seed(args.planner_seed)
 
-    # stable_worldmodel's HDF5Dataset accepts a dataset *name* plus cache
-    # directory (not an arbitrary path keyword).  Passing the local filename
-    # this way keeps the CLEAR fingerprint check tied to the exact file.
+
+
+
     dataset = swm.data.HDF5Dataset(
         args.dataset_path.stem,
         frameskip=int(cfg["dataset"].get("frameskip", 1)),

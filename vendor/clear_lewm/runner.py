@@ -674,8 +674,8 @@ def evaluate_manifest(
         if actor_warmstart_effective is not None:
             actor_warmstart_effective = bool(actor_warmstart_effective)
         if planner == "dinowm-gd":
-            # This solver initializes its own action tensor and never invokes
-            # the model's action head, even when the model exposes one.
+
+
             actor_warmstart_effective = False
         batched_criterion_patch = False
         canonical_lewm = (

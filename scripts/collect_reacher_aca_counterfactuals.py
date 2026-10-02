@@ -18,7 +18,7 @@ from pathlib import Path
 os.environ.setdefault("MUJOCO_GL", "egl")
 
 import h5py
-import hdf5plugin  # Registers the Blosc filter used by the original dataset.
+import hdf5plugin
 import numpy as np
 import torch
 from omegaconf import OmegaConf
@@ -48,9 +48,14 @@ def parse_args():
     parser.add_argument("--max-executions", type=int, default=None,
                         help="Optional cap after global top-fraction selection; omitted means execute all selected.")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--action-seed", type=int, default=None,
+                        help="Random-direction seed; defaults to --seed. Environment reset always uses --seed.")
     parser.add_argument("--episode-indices", type=Path, default=None)
     parser.add_argument("--source-indices", type=Path, default=None,
                         help="Optional exact source transition rows; execute all without hinge filtering.")
+    parser.add_argument("--action-mode", choices=("aca", "random"), default="aca",
+                        help="ACA gradient perturbation or a seeded random unit perturbation. "
+                             "Random mode requires --source-indices for a paired control.")
     return parser.parse_args()
 
 
@@ -103,7 +108,7 @@ def mine_positive_hinges(model, h5, starts, mean, std, low, high, frameskip, rho
 
     for begin in range(0, len(starts), batch_size):
         rows = starts[begin:begin + batch_size]
-        # HDF5 fancy indexing requires monotonic indices; `starts` is sorted.
+
         pixels_t = np.asarray(h5["pixels"][rows])
         pixels_next = np.asarray(h5["pixels"][rows + frameskip])
         raw_actions = np.asarray([h5["action"][row:row + frameskip] for row in rows])
@@ -123,8 +128,8 @@ def mine_positive_hinges(model, h5, starts, mean, std, low, high, frameskip, rho
         direction = gradient / gradient.norm(dim=-1, keepdim=True).clamp_min(1e-8)
         mined = (actions - float(rho) * direction).clamp(low_normalized, high_normalized)
         if keep_all:
-            # Exact-index mode: this is a fixed random source pool, not a
-            # mined/hinge-selected pool. Skip mined-energy computation.
+
+
             hinge = torch.zeros_like(factual_energy)
             mask = np.ones(len(rows), dtype=bool)
         else:
@@ -147,7 +152,7 @@ def mine_positive_hinges(model, h5, starts, mean, std, low, high, frameskip, rho
 
 def make_environment(seed):
     import gymnasium as gym
-    import stable_worldmodel  # Registers swm/ReacherDMControl-v0.
+    import stable_worldmodel
     return gym.make("swm/ReacherDMControl-v0", task="qpos_match").unwrapped
 
 
@@ -161,9 +166,9 @@ def restore_state(env, qpos, qvel, target_pos, seed):
 def create_output(path, image_shape, observation_dim, action_dim, atomic_action_dim, args, run_dir, checkpoint):
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
-        # A failed metadata-only initialization can leave an empty HDF5 shell.
-        # It is safe to resume by replacing that incomplete artifact; never
-        # overwrite a file that already contains collected transitions.
+
+
+
         try:
             with h5py.File(path, "r") as existing:
                 complete_rows = int(existing["action"].shape[0]) if "action" in existing else 0
@@ -180,8 +185,8 @@ def create_output(path, image_shape, observation_dim, action_dim, atomic_action_
     h5.attrs["source_checkpoint"] = str(checkpoint.resolve())
     for name, value in vars(args).items():
         if name not in {"run_dir", "checkpoint", "source", "output"}:
-            # argparse returns Path objects for filesystem arguments; HDF5
-            # attributes only support native scalar/string dtypes.
+
+
             if isinstance(value, (Path, os.PathLike)):
                 value = str(value)
             h5.attrs[name] = str(value) if value is None else value
@@ -212,6 +217,8 @@ def main():
     args.run_dir = args.run_dir.expanduser().resolve()
     args.source = args.source.expanduser().resolve()
     args.output = args.output.expanduser().resolve()
+    if args.action_mode == "random" and args.source_indices is None:
+        raise ValueError("--action-mode=random requires --source-indices for paired sampling")
     checkpoint = (args.checkpoint or args.run_dir / "checkpoints/last.ckpt").expanduser().resolve()
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -234,18 +241,28 @@ def main():
                 raise ValueError("--source-indices must be a non-empty 1-D array without duplicates")
             if any(int(x) not in valid_set for x in rows):
                 raise ValueError("--source-indices contains rows outside the requested source pool")
-            starts = np.sort(rows)
+
+
+            starts = rows if args.action_mode == "random" else np.sort(rows)
         mean, std, low, high = action_statistics(source)
         std = np.maximum(std, 1e-6)
         print(f"Scanning {len(starts):,} valid source transitions with frameskip={frameskip}.")
-        positive_rows, hinges, tiled_mean, tiled_std = mine_positive_hinges(
-            model, source, starts, mean, std, low, high, frameskip, args.rho,
-            args.margin, args.batch_size, device, keep_all=args.source_indices is not None,
-        )
+        tiled_mean = np.tile(mean, frameskip).astype(np.float32)
+        tiled_std = np.tile(std, frameskip).astype(np.float32)
+        if args.action_mode == "random":
+
+
+            positive_rows = starts
+            hinges = np.zeros(len(starts), dtype=np.float32)
+        else:
+            positive_rows, hinges, tiled_mean, tiled_std = mine_positive_hinges(
+                model, source, starts, mean, std, low, high, frameskip, args.rho,
+                args.margin, args.batch_size, device, keep_all=args.source_indices is not None,
+            )
         if len(positive_rows) == 0:
             raise RuntimeError("no positive-hinge actions found; no file was written")
         if args.source_indices is not None:
-            # Exact-index mode: no positive-hinge or top-fraction filtering.
+
             rows = positive_rows
             hinges = np.zeros_like(hinges)
         else:
@@ -261,29 +278,37 @@ def main():
         atomic_dim = int(source["action"].shape[1])
         output = create_output(args.output, image_shape, observation_dim, frameskip * atomic_dim, atomic_dim, args, args.run_dir, checkpoint)
         env = make_environment(args.seed)
-        rng = np.random.default_rng(args.seed)
+        env_rng = np.random.default_rng(args.seed)
+        action_rng = np.random.default_rng(
+            args.seed if args.action_seed is None else args.action_seed
+        )
         try:
             for count, (row, hinge) in enumerate(zip(rows, hinges), start=1):
-                restore_state(env, source["qpos"][row], source["qvel"][row], source["target_pos"][row], int(rng.integers(2**31 - 1)))
-                # Preserve the source observation at the factual start.  The
-                # state was restored solely so the *next* observation below
-                # comes from a real execution of the mined action.
+                restore_state(env, source["qpos"][row], source["qvel"][row], source["target_pos"][row], int(env_rng.integers(2**31 - 1)))
+
+
+
                 start_pixels = np.asarray(source["pixels"][row])
                 start_obs = np.asarray(source["observation"][row], dtype=np.float32)
-                # Recompute the selected ACA action exactly once from its row;
-                # storing no model-produced action in the selection pass keeps
-                # memory bounded for the full 1.8M-transition scan.
+
+
+
                 pixels = np.stack([source["pixels"][row], source["pixels"][row + frameskip]], axis=0)
                 tensor_pixels = torch.from_numpy(pixels[None]).permute(0, 1, 4, 2, 3).to(device)
                 raw = np.asarray(source["action"][row:row + frameskip]).reshape(1, -1).astype(np.float32)
                 normalized = torch.as_tensor((raw - tiled_mean) / tiled_std, device=device).unsqueeze(1)
-                with torch.no_grad():
-                    emb = model.encode({"pixels": tensor_pixels})["emb"]
-                action_grad = normalized.detach().clone().requires_grad_(True)
-                action_input = model.action_encoder(action_grad) if model.action_encoder is not None else action_grad
-                energy = (model.predict(emb[:, :1].detach(), action_input) - emb[:, 1:2].detach()).float().pow(2).mean()
-                (grad,) = torch.autograd.grad(energy, action_grad)
-                action_cf = normalized - args.rho * grad / grad.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+                if args.action_mode == "random":
+                    direction = action_rng.normal(size=normalized.shape).astype(np.float32)
+                    direction /= np.maximum(np.linalg.norm(direction, axis=-1, keepdims=True), 1e-8)
+                    action_cf = normalized + args.rho * torch.as_tensor(direction, device=device)
+                else:
+                    with torch.no_grad():
+                        emb = model.encode({"pixels": tensor_pixels})["emb"]
+                    action_grad = normalized.detach().clone().requires_grad_(True)
+                    action_input = model.action_encoder(action_grad) if model.action_encoder is not None else action_grad
+                    energy = (model.predict(emb[:, :1].detach(), action_input) - emb[:, 1:2].detach()).float().pow(2).mean()
+                    (grad,) = torch.autograd.grad(energy, action_grad)
+                    action_cf = normalized - args.rho * grad / grad.norm(dim=-1, keepdim=True).clamp_min(1e-8)
                 action_cf = action_cf.clamp(
                     torch.as_tensor((np.tile(low, frameskip) - tiled_mean) / tiled_std, device=device).view(1, 1, -1),
                     torch.as_tensor((np.tile(high, frameskip) - tiled_mean) / tiled_std, device=device).view(1, 1, -1),

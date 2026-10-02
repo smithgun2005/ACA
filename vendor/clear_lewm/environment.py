@@ -39,7 +39,7 @@ EVALUATION_RUNTIME_MODULES = {
     "checkpoint_loader": "stable_worldmodel.wm.utils",
 }
 
-# SHA-256 values from the stable-worldmodel 0.1.0 wheel published on PyPI.
+
 OFFICIAL_RUNTIME_HASHES = {
     "0.1.0": {
         "world": "39318b81ed151d8556d8540f460a63eedaed0ce4b2211ce0af9f8200e7d83bde",

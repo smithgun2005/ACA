@@ -5,7 +5,7 @@ import argparse, os, sys
 from pathlib import Path
 os.environ.setdefault('MUJOCO_GL', 'egl')
 import h5py
-import hdf5plugin  # noqa: F401
+import hdf5plugin
 import numpy as np
 import torch
 from omegaconf import OmegaConf
@@ -78,9 +78,9 @@ def main():
             all_rows.append(r.copy()); all_hinges.append(hg.detach().cpu().numpy())
             if mask.any(): positive.append(r[mask]); hinges.append(hg.detach().cpu().numpy()[mask])
             if b==0 or b+len(r)==len(rows): print(f'mined {b+len(r):,}/{len(rows):,}',flush=True)
-        # For matched random-index experiments, --source-indices with
-        # top_fraction=1 means keep the complete requested pool, regardless
-        # of hinge sign; this is deliberately not a mined/top-positive set.
+
+
+
         if a.source_indices is not None and a.top_fraction >= 1.0:
             rows = np.concatenate(all_rows)
             hinges = np.concatenate(all_hinges)
@@ -91,9 +91,9 @@ def main():
             order=np.argsort(hinges)[-n:][::-1]; rows=positive[order]; hinges=hinges[order]
             print(f'positive={len(positive):,}; selected={len(rows):,}',flush=True)
         else:
-            # Fixed-LR checkpoints can occasionally have no strict positive
-            # hinge at the requested rho. Continue with the highest-scoring
-            # candidates rather than aborting the whole staged run.
+
+
+
             rows_all=np.concatenate(all_rows); hinges_all=np.concatenate(all_hinges)
             n=max(1,int(np.ceil(a.top_fraction*len(rows_all))))
             order=np.argsort(hinges_all)[-n:][::-1]; rows=rows_all[order]; hinges=hinges_all[order]
@@ -104,7 +104,7 @@ def main():
             rows, hinges = rows[:a.max_executions], hinges[:a.max_executions]
         print(f'executing {len(rows):,} selected transitions', flush=True)
         import gymnasium as gym
-        import stable_worldmodel.envs  # noqa: F401
+        import stable_worldmodel.envs
         env=gym.make('swm/OGBCube-v0',env_type='single',ob_type='states',multiview=False,width=224,height=224,visualize_info=False,terminate_at_goal=True); u=env.unwrapped
         a.output.parent.mkdir(parents=True,exist_ok=True)
         if a.output.exists():
@@ -113,13 +113,13 @@ def main():
             a.output.unlink()
         out=h5py.File(a.output,'w'); out.attrs['format']='cube_aca_counterfactual_v1'; out.attrs['atomic_action_dim']=5; out.attrs['frameskip']=fs; out.attrs['source_run_dir']=str(run); out.attrs['source_checkpoint']=str(ckpt)
         out.create_dataset('pixels',shape=(0,2,224,224,3),maxshape=(None,2,224,224,3),dtype=np.uint8,chunks=(1,2,224,224,3),compression='lzf'); out.create_dataset('action',shape=(0,25),maxshape=(None,25),dtype=np.float32); out.create_dataset('observation',shape=(0,2,28),maxshape=(None,2,28),dtype=np.float32); out.create_dataset('source_index',shape=(0,),maxshape=(None,),dtype=np.int64); out.create_dataset('hinge',shape=(0,),maxshape=(None,),dtype=np.float32)
-        # Cache selected source rows before MuJoCo execution.  Source images
-        # are compressed in 100-row HDF5 chunks; scalar random reads here
-        # otherwise cause repeated decompression and make rendering appear
-        # inexplicably slow.
-        # h5py requires fancy indices to be increasing; mined rows are
-        # deliberately ranked/randomized. Read in sorted order and restore
-        # the original selection order afterwards.
+
+
+
+
+
+
+
         def take_sorted(ds, indices):
             indices = np.asarray(indices, dtype=np.int64)
             order = np.argsort(indices)
@@ -144,7 +144,7 @@ def main():
                 with torch.no_grad(): z=model.encode({'pixels':t})['emb']
                 ag=act.detach().clone().requires_grad_(True); ae=model.action_encoder(ag) if model.action_encoder is not None else ag; e=(model.predict(z[:,:1],ae)-z[:,1:2]).float().square().mean(); (g,)=torch.autograd.grad(e,ag); cf=(act-a.rho*g/g.norm(dim=-1,keepdim=True).clamp_min(1e-8)).clamp(lo,hi); controls=(cf.detach().cpu().numpy().reshape(-1)*ts+tm).reshape(fs,5)
                 obs1=obs0
-                for control in controls: obs1,_,term,_,_=env.step(control); 
+                for control in controls: obs1,_,term,_,_=env.step(control);
                 frame=u.render().copy(); i=out['action'].shape[0]
                 for d in out.values(): d.resize(i+1,axis=0)
                 out['pixels'][i]=np.stack([start,frame]); out['action'][i]=controls.reshape(-1); out['observation'][i]=np.stack([obs0,np.asarray(obs1,dtype=np.float32)]); out['source_index'][i]=row; out['hinge'][i]=hg

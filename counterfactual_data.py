@@ -9,7 +9,7 @@ duplicating ten images just to satisfy that storage convention.
 from pathlib import Path
 
 import h5py
-import hdf5plugin  # noqa: F401 - register Blosc filters used by Reacher source files
+import hdf5plugin
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -61,8 +61,8 @@ class CounterfactualTransitionDataset(Dataset):
             self.atomic_action_dim = int(f.attrs.get("atomic_action_dim", 0))
         if self.atomic_action_dim <= 0 or self.action_dim % self.atomic_action_dim:
             raise ValueError("invalid atomic_action_dim metadata in counterfactual dataset")
-        # ConcatDataset uses these solely to map episode indices. Each stored
-        # macro transition is one independent two-frame episode.
+
+
         self.lengths = np.ones(self.length, dtype=np.int64)
         self.offsets = np.arange(self.length, dtype=np.int64)
 
@@ -96,25 +96,25 @@ class CounterfactualTransitionDataset(Dataset):
             sample = {"pixels": torch.from_numpy(pixels).permute(0,3,1,2), "action": torch.from_numpy(action).repeat(2,1), "observation": torch.from_numpy(obs)}
             return self.transform(sample) if self.transform else sample
         pixels = self.h5_file["pixels"][index]
-        # Match HDF5Dataset: source HWC pixels become torch CHW pixels.
+
         sample = {
             "pixels": torch.from_numpy(pixels).permute(0, 3, 1, 2),
             "action": torch.from_numpy(self.h5_file["action"][index]).repeat(2, 1),
             "observation": torch.from_numpy(self.h5_file["observation"][index]),
         }
-        # Cube's training transform expects the merged ``proprio`` column.
-        # Collected transitions store the canonical state vector as
-        # ``observation``; expose the same tensor under that alias so union
-        # training applies the identical normalizer to offline and replay rows.
-        # The offline Cube config's merged proprio vector has width 19,
-        # whereas its observation/state vector has width 28.  Collected
-        # replay rows do not carry the individual proprio fields, and the
-        # training objective does not consume this auxiliary column; provide
-        # a shape-compatible zero placeholder so the shared normalizer can
-        # run without changing the model inputs.
-        # Reacher has no such column.  Every sample in a collated batch must
-        # have the same keys, so add the placeholder only when its base
-        # dataset is configured to load merged proprio.
+
+
+
+
+
+
+
+
+
+
+
+
+
         if self.include_proprio:
             sample["proprio"] = torch.zeros(
                 sample["observation"].shape[0], 19,
@@ -124,9 +124,9 @@ class CounterfactualTransitionDataset(Dataset):
 
     def get_col_data(self, column):
         if getattr(self, "index_mode", False):
-            # This API is used for statistics on ordinary datasets.  Replay
-            # index files are intentionally tiny and only expose metadata;
-            # materialize source columns only when explicitly requested.
+
+
+
             self._open()
             src = self.source_h5
             if column == "action":

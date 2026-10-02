@@ -10,7 +10,7 @@ import torch
 
 try:
     from stable_worldmodel.data.dataset import Dataset
-except ImportError as exc:  # pragma: no cover - exercised without the optional extra
+except ImportError as exc:
     raise ImportError("FastMemmapDataset requires `pip install -e '.[lewm]'`.") from exc
 
 

@@ -20,9 +20,9 @@ from omegaconf import OmegaConf
 from sklearn import preprocessing
 from torchvision.transforms import v2 as transforms
 
-# stable_worldmodel's Push-T environment uses the Pymunk 7
-# ``Space.on_collision`` spelling, while this repository pins Pymunk 6.11.
-# Keep the pinned physics implementation and provide the equivalent adapter.
+
+
+
 try:
     import pymunk
 
@@ -40,21 +40,138 @@ except ImportError:
 import stable_pretraining as spt
 import stable_worldmodel as swm
 
-# Push-T's reset path builds a goal frame through pygame/Pymunk's debug
-# renderer even for state-only evaluation.  That renderer is incompatible
-# with the installed Pymunk 6 + pygame build and can segfault.  Planning eval
-# consumes Push-T state/proprio (not pixels), so replace only the unused frame
-# renderer with a correctly shaped blank RGB frame; physics and success logic
-# remain untouched.
+
+
+
+
 try:
+    import cv2
+    import pygame
+
     from stable_worldmodel.envs.pusht.env import PushT
 
+
+    def _rgb(color):
+        return tuple(int(channel) for channel in color[:3])
+
+    def _light_rgb(color):
+        return tuple(min(round(1.2 * channel), 255) for channel in _rgb(color))
+
+    def _point(vector):
+        return round(vector.x), round(vector.y)
+
+    def _draw_pusht_shape(image, shape):
+        """Draw one Pymunk shape without entering its C debug-draw callback."""
+        body = shape.body
+        fill_color = getattr(shape, "color", (149, 165, 166, 255))
+
+        if isinstance(shape, pymunk.Circle):
+            center = body.local_to_world(shape.offset)
+            cv2.circle(
+                image, _point(center), round(shape.radius), _rgb(fill_color), -1
+            )
+            cv2.circle(
+                image,
+                _point(center),
+                max(0, round(shape.radius - 4)),
+                _light_rgb(fill_color),
+                -1,
+            )
+        elif isinstance(shape, pymunk.Poly):
+            vertices = [body.local_to_world(v) for v in shape.get_vertices()]
+            points = np.asarray([_point(v) for v in vertices], dtype=np.int32)
+            cv2.fillPoly(image, [points], _light_rgb(fill_color))
+            cv2.polylines(image, [points], True, _rgb(fill_color), 4)
+        elif isinstance(shape, pymunk.Segment):
+            start = body.local_to_world(shape.a)
+            end = body.local_to_world(shape.b)
+            width = max(1, round(2 * shape.radius))
+            cv2.line(image, _point(start), _point(end), _rgb(fill_color), width)
+            if width > 2:
+                radius = max(1, round(shape.radius))
+                cv2.circle(image, _point(start), radius, _rgb(fill_color), -1)
+                cv2.circle(image, _point(end), radius, _rgb(fill_color), -1)
+        else:
+            raise TypeError(f"unsupported Push-T render shape: {type(shape)!r}")
+
     def _eval_safe_pusht_render_frame(self, mode=None):
-        size = int(getattr(self, "render_size", 512))
-        return np.zeros((size, size, 3), dtype=np.uint8)
+        if self.window is None and mode == "human":
+            pygame.init()
+            pygame.display.init()
+            self.window = pygame.display.set_mode(
+                (self.window_size, self.window_size)
+            )
+        if self.clock is None and mode == "human":
+            self.clock = pygame.time.Clock()
+
+        background = _rgb(self.variation_space["background"]["color"].value)
+        image = np.empty((self.window_size, self.window_size, 3), dtype=np.uint8)
+        image[:] = background
+
+        render_goal = (
+            bool(self.variation_space["rendering"]["render_goal"].value)
+            and self.with_target
+        )
+        if render_goal:
+            goal_body = self._get_goal_pose_body(self.goal_pose)
+            goal_color = self.variation_space["goal"]["color"].value
+            for shape in self.block.shapes:
+                if isinstance(shape, pymunk.Circle):
+                    center = goal_body.local_to_world(shape.offset)
+                    cv2.circle(
+                        image,
+                        _point(center),
+                        round(shape.radius),
+                        _rgb(goal_color),
+                        -1,
+                    )
+                elif isinstance(shape, pymunk.Poly):
+                    vertices = [
+                        goal_body.local_to_world(v) for v in shape.get_vertices()
+                    ]
+                    points = np.asarray(
+                        [_point(v) for v in vertices], dtype=np.int32
+                    )
+                    cv2.fillPoly(image, [points], _rgb(goal_color))
+                else:
+                    raise TypeError(
+                        f"unsupported Push-T goal shape: {type(shape)!r}"
+                    )
+
+        self._set_body_color(
+            self.agent, self.variation_space["agent"]["color"].value.tolist()
+        )
+        self._set_body_color(
+            self.block, self.variation_space["block"]["color"].value.tolist()
+        )
+        for shape in self.space.shapes:
+            _draw_pusht_shape(image, shape)
+
+        if mode == "human":
+            canvas = pygame.surfarray.make_surface(np.transpose(image, (1, 0, 2)))
+            self.screen = canvas
+            self.window.blit(canvas, canvas.get_rect())
+            pygame.event.pump()
+            pygame.display.update()
+
+        image = cv2.resize(image, (self.render_size, self.render_size))
+        if self.render_action and self.latest_action is not None:
+            action = np.asarray(self.latest_action)
+            coord = (action / 512 * 96).astype(np.int32)
+            marker_size = int(8 / 96 * self.render_size)
+            thickness = int(1 / 96 * self.render_size)
+            cv2.drawMarker(
+                image,
+                coord,
+                color=(255, 0, 0),
+                markerType=cv2.MARKER_CROSS,
+                markerSize=marker_size,
+                thickness=thickness,
+            )
+        return image
 
     PushT._render_frame = _eval_safe_pusht_render_frame
-except Exception:
+except ImportError:
     pass
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -67,7 +184,7 @@ from utils import load_composed_config
 
 
 
-def build_solver(cfg, model):
+def build_solver(cfg, model, planner_seed=None):
     """Build the only supported planner: ordinary CEM."""
     solver = dict(cfg["solver"])
     solver_type = solver.pop("type", "cem")
@@ -75,7 +192,10 @@ def build_solver(cfg, model):
         raise ValueError(
             f"ACA only supports standard CEM evaluation; got solver.type={solver_type!r}"
         )
-    return swm.solver.CEMSolver(model=model, seed=cfg["seed"], **solver)
+
+
+    seed = cfg["seed"] if planner_seed is None else int(planner_seed)
+    return swm.solver.CEMSolver(model=model, seed=seed, **solver)
 
 
 def build_jepa(cfg):
@@ -88,10 +208,10 @@ def build_jepa(cfg):
     )
     hidden_dim = encoder.config.hidden_size
     embed_dim = cfg.wm.get("embed_dim", hidden_dim)
-    # Training writes the inferred atomic action width into ``wm.action_dim``
-    # only after opening the dataset.  Standalone eval must be able to rebuild
-    # a model from the saved config, so recover it from the saved config/data
-    # metadata when the field is absent.
+
+
+
+
     atomic_action_dim = cfg.wm.get("action_dim", None)
     if atomic_action_dim is None:
         action_dims = {"cube_single_expert_train": 5, "reacher_train": 2,
@@ -103,12 +223,12 @@ def build_jepa(cfg):
     effective_act_dim = cfg.data.dataset.frameskip * int(atomic_action_dim)
     predictor_type = cfg.predictor.get("type", "ar")
     predictor_kwargs = {k: v for k, v in cfg.predictor.items() if k != "type"}
-    # AFT/CAFE/LAF and masked transition completion use raw normalized action
-    # coordinates. AIG deliberately remains ordinary AR/AdaLN at inference.
+
+
     use_raw_actions = predictor_type in ("aft", "cafe", "laf", "masked_transition", "mtm", "transition_jepa")
 
-    # See train.py: AFT must predict directly into embed_dim and skip
-    # pred_proj so its action-faithfulness identity isn't undone downstream.
+
+
     predictor_output_dim = embed_dim if use_raw_actions else hidden_dim
     inverse_type = cfg.inverse.get("type", "mlp")
     use_inverse_model = bool(cfg.loss.inverse.weight) and inverse_type != "iipdc"
@@ -260,7 +380,7 @@ def sample_start_indices(dataset, num_eval, goal_offset_steps, seed):
     return rows[col_name].tolist(), rows["step_idx"].tolist()
 
 
-def collect_results(out_root: Path, preferred_order=None):
+def collect_results(out_root: Path, preferred_order=None, allowed_names=None):
     results_by_name = {}
     for metrics_path in sorted(out_root.glob("*/metrics.json")):
         try:
@@ -269,6 +389,8 @@ def collect_results(out_root: Path, preferred_order=None):
             print(f"Skipping invalid metrics file {metrics_path}: {exc}")
             continue
         name = result.get("name", metrics_path.parent.name)
+        if allowed_names is not None and name not in allowed_names:
+            continue
         results_by_name[name] = result
 
     preferred_order = preferred_order or []
@@ -289,6 +411,7 @@ def evaluate_run(run, cfg, out_dir: Path, dataset, episodes, start_steps):
         "policy": policy_name,
         "seed": cfg["seed"],
         "task_seed": cfg["eval"].get("task_seed", cfg["seed"]),
+        "planner_seed": int(run.get("planner_seed", cfg["seed"])),
     }
     if policy_name == "cem":
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -300,7 +423,7 @@ def evaluate_run(run, cfg, out_dir: Path, dataset, episodes, start_steps):
             "pixels": img_transform(cfg["eval"]["img_size"]),
             "goal": img_transform(cfg["eval"]["img_size"]),
         }
-        solver = build_solver(cfg, model)
+        solver = build_solver(cfg, model, run.get("planner_seed"))
         policy = swm.policy.WorldModelPolicy(
             solver=solver,
             config=swm.PlanConfig(**cfg["plan_config"]),
@@ -351,9 +474,9 @@ def main():
         cfg_node = OmegaConf.merge(cfg_node, OmegaConf.from_dotlist(overrides))
     cfg = OmegaConf.to_container(cfg_node, resolve=True)
 
-    # A single-run convenience mode for the standalone ACA package.  The
-    # launcher may provide MODEL_RUN_DIR instead of maintaining a generated
-    # multi-run YAML.
+
+
+
     if not cfg.get("runs"):
         model_run = os.environ.get("MODEL_RUN_DIR")
         if not model_run:
@@ -389,6 +512,7 @@ def main():
     dataset = swm.data.HDF5Dataset(
         cfg["eval"]["dataset_name"],
         keys_to_cache=cfg["dataset"]["keys_to_cache"],
+        cache_dir=cfg["dataset"].get("cache_dir"),
     )
     task_seed = int(cfg["eval"].get("task_seed", cfg["seed"]))
     print(f"Sampling evaluation tasks with seed={task_seed}.")
@@ -406,8 +530,11 @@ def main():
         (run_out / "metrics.json").write_text(json.dumps(result, indent=2, default=str))
 
     summary_path = out_root / "summary.json"
+    configured_names = [run["name"] for run in cfg["runs"]]
     all_results = collect_results(
-        out_root, preferred_order=[run["name"] for run in cfg["runs"]]
+        out_root,
+        preferred_order=configured_names,
+        allowed_names=set(configured_names),
     )
     summary_path.write_text(json.dumps(all_results, indent=2, default=str))
     print(f"\nWrote summary to {summary_path}")

@@ -1,0 +1,44 @@
+defaults:
+  - /eval/base
+  - _self_
+
+seed: 43025
+
+hydra:
+  searchpath:
+    - file://${oc.env:REPO_ROOT}/config
+
+world:
+  env_name: swm/ReacherDMControl-v0
+  task: qpos_match
+
+dataset:
+  cache_dir: ${oc.env:EXTERNAL_DATA_ROOT,/root/autodl-tmp/sensorimotor-world-model/planning/data/external}
+  keys_to_cache: [action]
+
+eval:
+  num_eval: 100
+  dataset_name: reacher_eval
+  task_seed: 43025
+  goal_offset_steps: 25
+  eval_budget: 50
+  save_video: false
+  callables:
+    - method: set_state
+      args:
+        qpos: {value: qpos}
+        qvel: {value: qvel}
+    - method: set_target_qpos
+      args:
+        target_qpos: {value: goal_qpos}
+
+solver:
+  type: cem
+  batch_size: 1
+  num_samples: 300
+  var_scale: 1.0
+  n_steps: 30
+  topk: 30
+  device: cuda
+
+plan_config: {horizon: 5, receding_horizon: 5, action_block: 5}

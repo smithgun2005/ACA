@@ -12,17 +12,17 @@ artifacts:
   log_lightning_hparams: false
   use_external_callbacks: false
   save_model_object: false
-  save_epoch_checkpoints: false  # retain checkpoints/epoch=XX.ckpt for analysis
+  save_epoch_checkpoints: false
 
-# Load only model parameters from an existing Lightning checkpoint. Optimizer
-# and epoch state start fresh, which is what a one-epoch factual fine-tune uses.
+
+
 init_from_checkpoint: null
 
-# Full Lightning resume: model, optimizer, LR scheduler, epoch and global step
-# all continue from this checkpoint.  Unlike init_from_checkpoint this is for
-# a genuinely continuous final epoch, e.g. train epoch 9 then add data for
-# epoch 10.  train.py copies it into the new run directory before fitting so
-# the source experiment is never overwritten by a new checkpoint.
+
+
+
+
+
 resume_from_checkpoint: null
 
 trainer:
@@ -47,8 +47,8 @@ optimizer:
   lr: 1e-4
   weight_decay: 1e-3
 
-# Set false for controlled fixed-LR experiments.  The optimizer then receives
-# no scheduler and retains optimizer.lr for every update.
+
+
 scheduler:
   enabled: true
 
@@ -69,11 +69,11 @@ wm:
   history_size: 1
   num_preds: 1
   embed_dim: 192
-  grounded_coordinate: false  # overwrite the last embed dim with real pixel-change energy
-  grounded_coordinate_scale: 10.0  # fixed (non-learned) rescale to match BatchNorm'd magnitude
+  grounded_coordinate: false
+  grounded_coordinate_scale: 10.0
 
 predictor:
-  type: ar  # "ar", "aft", "cafe", "laf", "endpoint_completion", or "masked_transition"
+  type: ar
   depth: 6
   heads: 16
   mlp_dim: 2048
@@ -83,47 +83,47 @@ predictor:
 
 inverse:
   hidden_dim: 256
-  type: mlp  # "mlp" (free-form InverseModel) or "iipdc" (Inverse-Isometric PDC)
+  type: mlp
   blind_hidden_dim: 256
 
 loss:
   action_normal:
-    # Action-Normal Equation: ||d/da 1/2||P(z,a)-z_next||^2||^2.
-    # Kept disabled by default for exact legacy behavior.
+
+
     weight: 0.0
   random_aca:
-    # ACA hinge with exactly one independently sampled unit-sphere direction;
-    # this is a control for whether arbitrary local comparisons suffice.
+
+
     weight: 0.0
     rho: 1.0
     margin: 0.0
   gradient_penalty:
-    # rho * ||d E(z_t, a, z_{t+1}) / da||_2 at the factual action.
-    # This is the small-radius first-order control for directional ACA.
+
+
     weight: 0.0
     rho: 1.0
   si:
-    # Self-Inverting World Model (SI-WM): denoise a noisy action with the
-    # gradient of the forward prediction-residual energy. `sigma` is in
-    # normalized action coordinates; step_size defaults to sigma^2.
+
+
+
     weight: 0.0
     sigma: 0.5
     step_size: null
   masked_transition:
-    # Weights for [z_t, M_z, a] -> z_{t+1} and [z_t, z_{t+1}, M_a] -> a.
-    # They default to the original equally weighted objective.
+
+
     pred_weight: 0.5
     action_weight: 0.5
   predictive_mask:
-    # Fixed-visible-budget, prediction-driven image patch selection. Kept
-    # disabled by default so existing LeWM configurations are unchanged.
+
+
     enabled: false
     beta: 1.0
-    num_masked_patches: 128  # ViT-tiny at 224/14 has 16x16=256 patches.
+    num_masked_patches: 128
     temperature: 0.5
     alpha: 1.0
     hidden_dim: 256
-    policy_lr: null  # null reuses optimizer.lr
+    policy_lr: null
     base_seed: 0
   sigreg:
     weight: 0.0
@@ -131,27 +131,27 @@ loss:
       knots: 17
       num_proj: 1024
   innov:
-    # Neural Innovation Coding: decorrelate adjacent normalized latent
-    # prediction residuals. Disabled by default for exact legacy configs.
+
+
     weight: 0.0
     eps: 1.0e-6
   inverse:
     weight: 1.0
   aig:
-    weight: 0.0  # Action-Innovation Gradient: exact LeWM forward, innovation-only AdaLN gradient
+    weight: 0.0
   rsi:
-    weight: 0.0  # Forward--Inverse adversarial action-consistency game
+    weight: 0.0
     real_weight: 1.0
     separation_weight: 1.0
     catch_weight: 1.0
     margin: 0.01
   cai:
-    weight: 0.0  # Causal Action Identifiability; set >0 to add the CAI repair
+    weight: 0.0
     blind_hidden_dim: 256
     transition_hidden_dim: 256
   pdc:
     weight: 0.0
-    jensen: false  # Jensen-PDC: add action-midpoint consistency term (reuses this head's Q)
+    jensen: false
     kwargs:
       k: 64
       seed: 0
@@ -163,36 +163,36 @@ loss:
       scales: [1, 2, 4]
       seed: 0
   as_pdc:
-    weight: 0.0  # Action-Secant PDC (counterfactual action delta grounding)
+    weight: 0.0
   delta_lift:
-    weight: 0.0  # Grounded DeltaLift: anchored-identity anti-collapse loss with a nonzero escape gradient at delta_z=0
+    weight: 0.0
     kwargs:
       k: 64
-      tau: 1.0  # radius of the near-zero ball in projected latent-displacement space
+      tau: 1.0
       seed: 0
       pixel_eps: 1.0e-6
   aca:
-    weight: 0.0  # Adversarial Contrastive Action: rank real action above a nearby impostor
-    # gradient: ordinary factual-vs-counterfactual ACA hinge.
-    # counterfactual_only: optimize only E(z_t, a_cf, z_{t+1}), where a_cf is
-    # the native rho-step negative-gradient action mined from a_fact.
+    weight: 0.0
+
+
+
     mode: gradient
-    rho: 1.0  # fixed perturbation radius (in normalized action units) for the mined impostor action
-    noise_scale: 0.0  # deterministic ACA: no random direction noise
-    margin: 0.0  # Convergent ACA uses zero-margin factual-vs-local-minimum gap.
-    # Optional encoder-only loss-ratio scaling. Disabled by default so ACA
-    # keeps its historical single-hinge behavior.
+    rho: 1.0
+    noise_scale: 0.0
+    margin: 0.0
+
+
     encoder_scale: none
-    # adversary: gradient | convergent (or aca_infinity) | random_shooting | cem | closed_form
-    # Convergent ACA inner solve; used only when adversary=convergent.
+
+
     max_steps: 20
-    step_size: null  # defaults to rho / 4
+    step_size: null
     grad_tol: 1.0e-5
     num_restarts: 4
     online:
-      # Active ACA data collection. When enabled, ACA's hinge is NOT added to
-      # the model loss (regardless of aca.weight): top positive-hinge fake
-      # actions are executed in the real environment and replayed instead.
+
+
+
       enabled: false
       rho: 1.0
       margin: 0.0
@@ -203,30 +203,30 @@ loss:
       replay_ratio: 0.25
       save_replay: true
     epoch_active:
-      # Epoch-delayed active ACA.  Every original transition gets one native
-      # gradient-mined action; globally highest positive hinges are executed
-      # only after the epoch and join the actual union dataset next epoch.
-      # No ACA hinge is added to the optimization objective in this mode.
+
+
+
+
       enabled: false
       rho: 0.2
       margin: 0.0
       top_fraction: 0.01
-      # Mine only one in N training batches. Training still uses every batch;
-      # this limits the extra action-gradient and MuJoCo collection cost.
+
+
       collect_every_n_batches: 10
-      max_samples_per_epoch: null  # optional safety cap; null means all top 1%
+      max_samples_per_epoch: null
 
 compile:
   enabled: false
 
 data:
   dataset:
-    # train.py raises this to wm.history_size + 1 when history_size > 1.
+
     num_steps: 2
   counterfactual:
     enabled: false
     path: null
-    only: false  # train only on the collected transitions
+    only: false
 
 hydra:
   run:

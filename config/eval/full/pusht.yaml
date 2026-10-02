@@ -1,0 +1,42 @@
+defaults:
+  - /eval/base
+  - _self_
+
+seed: 44025
+
+hydra:
+  searchpath:
+    - file://${oc.env:REPO_ROOT}/config
+
+world:
+  env_name: swm/PushT-v1
+
+dataset:
+  cache_dir: ${oc.env:EXTERNAL_DATA_ROOT,/root/autodl-tmp/sensorimotor-world-model/planning/data/external}
+  keys_to_cache: [action, proprio, state]
+
+eval:
+  num_eval: 100
+  dataset_name: pusht_expert_eval
+  task_seed: 44025
+  goal_offset_steps: 25
+  eval_budget: 50
+  save_video: false
+  callables:
+    - method: _set_state
+      args:
+        state: {value: state}
+    - method: _set_goal_state
+      args:
+        goal_state: {value: goal_state}
+
+solver:
+  type: cem
+  batch_size: 1
+  num_samples: 300
+  var_scale: 1.0
+  n_steps: 30
+  topk: 30
+  device: cuda
+
+plan_config: {horizon: 5, receding_horizon: 5, action_block: 5}

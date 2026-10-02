@@ -1,0 +1,52 @@
+defaults:
+  - /eval/base
+  - _self_
+
+seed: 45025
+
+hydra:
+  searchpath:
+    - file://${oc.env:REPO_ROOT}/config
+
+world:
+  env_name: swm/OGBCube-v0
+  env_type: single
+  ob_type: states
+  multiview: false
+  width: 224
+  height: 224
+  visualize_info: false
+  terminate_at_goal: true
+
+dataset:
+  cache_dir: ${oc.env:EXTERNAL_DATA_ROOT,/root/autodl-tmp/sensorimotor-world-model/planning/data/external}
+  keys_to_cache: [action]
+
+eval:
+  num_eval: 100
+  dataset_name: cube_single_expert_eval
+  task_seed: 45025
+  goal_offset_steps: 25
+  eval_budget: 50
+  save_video: false
+  callables:
+    - method: set_state
+      args:
+        qpos: {value: qpos}
+        qvel: {value: qvel}
+    - method: set_target_pos
+      args:
+        cube_id: {value: 0, in_dataset: false}
+        target_pos: {value: goal_privileged_block_0_pos}
+        target_quat: {value: goal_privileged_block_0_quat}
+
+solver:
+  type: cem
+  batch_size: 1
+  num_samples: 300
+  var_scale: 1.0
+  n_steps: 30
+  topk: 30
+  device: cuda
+
+plan_config: {horizon: 5, receding_horizon: 5, action_block: 5}

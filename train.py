@@ -19,7 +19,7 @@ from torch.utils.data import Dataset
 from lightning.pytorch.callbacks import Callback, ModelCheckpoint
 import numpy as np
 import h5py
-import hdf5plugin  # registers the compression filter used by Reacher HDF5
+import hdf5plugin
 from lightning.pytorch.loggers import CSVLogger, WandbLogger
 from omegaconf import OmegaConf, open_dict
 
@@ -101,9 +101,9 @@ def prepare_full_resume_checkpoint(
         raise FileNotFoundError(f"resume_from_checkpoint does not exist: {source}")
     destination = run_dir / "checkpoints" / "last.ckpt"
     destination.parent.mkdir(parents=True, exist_ok=True)
-    # In DDP every rank executes Hydra's run function. Serialize the initial
-    # copy: without this lock multiple ranks can concurrently write a 300+ MB
-    # checkpoint and Lightning may read a partial file.
+
+
+
     lock_path = destination.with_suffix(".resume.lock")
     with open(lock_path, "w") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
@@ -173,9 +173,9 @@ def scheduler_step_budget(cfg, train_set) -> tuple[int, int]:
     else:
         world_size = int(devices)
     world_size = max(1, world_size)
-    # With epoch-active ACA the union grows only after an epoch completes.
-    # Budget for the conservative maximum (every original row has positive
-    # hinge) so cosine decay never reaches zero before the final new rows.
+
+
+
     active = cfg.loss.get("aca", {}).get("epoch_active", {})
     if bool(active.get("enabled", False)):
         frac = float(active.get("top_fraction", 0.0))
@@ -188,8 +188,8 @@ def scheduler_step_budget(cfg, train_set) -> tuple[int, int]:
         per_rank_examples = int(np.ceil(len(train_set) / world_size))
     steps_per_epoch = max(1, per_rank_examples // int(cfg.loader.batch_size))
     max_steps = max(2, steps_per_epoch * int(cfg.trainer.max_epochs))
-    # Controlled multi-stage runs can reserve a scheduler budget before the
-    # data union changes (e.g. mine after epoch 4, then train epoch 5).
+
+
     override = cfg.get("scheduler", {}).get("max_steps_override")
     if override is not None:
         max_steps = max(2, int(override))
@@ -248,8 +248,8 @@ class OnlineACAReplay:
         self.capacity = int(online.replay_capacity)
         self.samples = deque(maxlen=self.capacity)
         self.rng = np.random.default_rng(seed)
-        # HDF5 stores atomic 2-D controls; HDF5Dataset concatenates the
-        # ``frameskip`` controls into each model action vector.
+
+
         self.action_mean = np.tile(
             action_mean.detach().cpu().float().numpy().reshape(-1), self.frameskip
         )
@@ -261,19 +261,19 @@ class OnlineACAReplay:
 
     def _environment(self):
         if self.env is None:
-            # EGL is needed on headless workers and must be selected before
-            # dm_control initializes an OpenGL context.
+
+
             os.environ.setdefault("MUJOCO_GL", "egl")
             import gymnasium as gym
-            import stable_worldmodel  # registers swm/ReacherDMControl-v0
+            import stable_worldmodel
             self.env = gym.make("swm/ReacherDMControl-v0", task="qpos_match")
         return self.env.unwrapped
 
     def _set_transition_state(self, env, qpos, qvel, target_pos):
         env.reset(seed=int(self.rng.integers(2**31 - 1)))
         env.set_state(np.asarray(qpos, dtype=np.float64), np.asarray(qvel, dtype=np.float64))
-        # Reacher's target is a physical geom; move it to the factual state's
-        # recorded location before rendering/executing the counterfactual.
+
+
         env.env.physics.named.model.geom_pos["target", :2] = np.asarray(
             target_pos, dtype=np.float64
         )
@@ -297,7 +297,7 @@ class OnlineACAReplay:
                 obs_next, _, terminated, _, info = env.step(control)
                 if terminated:
                     break
-            # Dataset samples are CHW tensors; DM-Control renders HWC.
+
             next_pixels = env.render(self.img_size, self.img_size).transpose(2, 0, 1)
             next_obs = np.asarray(obs_next, dtype=np.float32)
             if pixels[row, 0].shape != next_pixels.shape:
@@ -325,8 +325,8 @@ class OnlineACAReplay:
             return batch
         positions = self.rng.choice(len(self.samples), size=count, replace=False)
         chosen = [self.samples[int(i)] for i in positions]
-        # Preserve batch shape: replacement does not alter the dataloader or
-        # distributed batch accounting. Online actions are already normalized.
+
+
         replace = torch.randperm(batch_size, device=batch["action"].device)[:count]
         for dst, item in zip(replace.tolist(), chosen):
             batch["pixels"][dst] = torch.from_numpy(item["pixels"]).to(batch["pixels"])
@@ -415,9 +415,9 @@ class EpochActiveACADataset(Dataset):
         self._open()
         row = index - base_len
         f = self.h5_file
-        # HDF5Dataset returns two action rows.  Only the first one is used by
-        # the forward loss; duplicating it makes the inverse loss's [:, :-1]
-        # target have the same shape as ordinary sequence samples.
+
+
+
         sample = {
             "pixels": torch.from_numpy(f["pixels"][row]).permute(0, 3, 1, 2),
             "action": torch.from_numpy(f["action"][row]).repeat(2, 1),
@@ -425,8 +425,8 @@ class EpochActiveACADataset(Dataset):
             "qpos": torch.from_numpy(f["qpos"][row]),
             "qvel": torch.from_numpy(f["qvel"][row]),
             "target_pos": torch.from_numpy(f["target_pos"][row]),
-            # ``-1`` cannot identify an HDF5 original row and is the explicit
-            # marker that prevents generated samples being mined again.
+
+
             "id": torch.full((2,), -1, dtype=torch.long),
             "replay_pixels": torch.from_numpy(f["pixels"][row]).permute(0, 3, 1, 2),
             "replay_observation": torch.from_numpy(f["observation"][row]),
@@ -441,7 +441,7 @@ class EpochActiveACADataset(Dataset):
         """Append one already-executed chunk and expose it next epoch."""
         if not records:
             return
-        self.close()  # never hold an HDF5 reader while opening its writer
+        self.close()
         n = len(records["action"])
         with h5py.File(self.path, "a") as f:
             start = int(f["action"].shape[0])
@@ -477,7 +477,7 @@ class EpochActiveACACollector:
         if self.env is None:
             os.environ.setdefault("MUJOCO_GL", "egl")
             import gymnasium as gym
-            import stable_worldmodel  # registers swm/ReacherDMControl-v0
+            import stable_worldmodel
             self.env = gym.make("swm/ReacherDMControl-v0", task="qpos_match")
         return self.env.unwrapped
 
@@ -492,9 +492,9 @@ class EpochActiveACACollector:
         every = int(self.cfg.get("collect_every_n_batches", 1))
         if every <= 0:
             raise ValueError("epoch_active.collect_every_n_batches must be positive")
-        # ``global_step`` refers to the current optimization step here. This
-        # calls ACA on batch 0, 10, 20, ... and leaves all other batches as
-        # ordinary forward/inverse training only.
+
+
+
         if int(global_step) % every != 0:
             return 0
         original = batch["replay_id"][:, 0] != -1
@@ -506,9 +506,9 @@ class EpochActiveACACollector:
             rho=float(self.cfg.rho), margin=float(self.cfg.margin),
             action_low=self.action_low, action_high=self.action_high,
         )
-        # JEPA's action energy averages over all non-batch dimensions, hence
-        # hinge is normally (batch,).  Accept a trailing singleton too so the
-        # collector stays valid for predictors returning an explicit horizon.
+
+
+
         hinge_rows = hinge if hinge.ndim == 1 else hinge[:, 0]
         positive = torch.nonzero(hinge_rows > 0, as_tuple=False).squeeze(-1)
         if positive.numel() == 0:
@@ -537,7 +537,7 @@ class EpochActiveACACollector:
         selected = {key: value[top] for key, value in merged.items()}
         env = self._environment()
         chunk = {"pixels": [], "action": [], "observation": [], "qpos": [], "qvel": [], "target_pos": []}
-        # Write in small chunks: top 1% can still be thousands of 224px images.
+
         for i in range(keep):
             self._set_transition_state(env, selected["qpos"][i].numpy(), selected["qvel"][i].numpy(), selected["target_pos"][i].numpy())
             start_pixels = env.render(self.img_size, self.img_size)
@@ -661,7 +661,7 @@ def forward_inverse_game_training_step(self, batch, batch_idx, cfg):
         if scheduler is not None:
             scheduler.step()
 
-    # 1) Discriminator / IDM: all transition endpoints are stopped.
+
     _set_requires_grad(self.model, False)
     _set_requires_grad(idm, True)
     with torch.no_grad(), _freeze_batchnorm_running_stats(self.model):
@@ -678,16 +678,16 @@ def forward_inverse_game_training_step(self, batch, batch_idx, cfg):
     idm_loss = disc_real_energy + F.relu(margin + disc_real_energy - disc_fake_energy)
     step(idm_opt, schedulers[2], idm_loss)
 
-    # 2) Encoder: baseline prediction loss remains live into the shared
-    # encoder. Predictor/IDM weights are frozen, but autograd still traverses
-    # their operations to obtain d L_pred / d z_t and d L_real / d z.
+
+
+
     _set_requires_grad(idm, False)
     _set_requires_grad(self.model, False)
     for module in encoder_modules:
         _set_requires_grad(module, True)
-    # pred_proj belongs to the predictor update, but must stay in train-mode
-    # batch normalization so its frozen function is baseline-equivalent.  Its
-    # buffers are held fixed during the encoder-only update.
+
+
+
     with _freeze_batchnorm_running_stats(self.model.pred_proj):
         enc_out = _rsi_encode(self.model, batch)
         enc_emb = enc_out["emb"]
@@ -696,10 +696,10 @@ def forward_inverse_game_training_step(self, batch, batch_idx, cfg):
         enc_z_tp1 = enc_emb[:, 1 : history_size + 1]
         enc_fake = self.model.predict(enc_z_t, enc_out["act_emb"][:, :history_size])
     encoder_pred_loss = (enc_fake - enc_z_tp1).pow(2).mean()
-    # Hard audit of the requested baseline property: with P frozen, the
-    # ordinary prediction loss must still carry gradient into both shared
-    # encoder endpoints.  Compute it only on the first batch to avoid making
-    # the full training run pay for an extra backward traversal.
+
+
+
+
     if batch_idx == 0:
         pred_grad_z_t, pred_grad_z_tp1 = torch.autograd.grad(
             encoder_pred_loss,
@@ -734,9 +734,9 @@ def forward_inverse_game_training_step(self, batch, batch_idx, cfg):
     )
     step(encoder_opt, schedulers[0], encoder_loss)
 
-    # 3) Predictor: E is frozen and its endpoints are detached. IDM weights
-    # are frozen but its input path remains differentiable, so catch-up repairs
-    # only the generated transition rather than the discriminator.
+
+
+
     _set_requires_grad(self.model, False)
     for module in predictor_modules:
         _set_requires_grad(module, True)
@@ -762,7 +762,7 @@ def forward_inverse_game_training_step(self, batch, batch_idx, cfg):
     predictor_loss = predictor_pred_loss + catch_weight * catch_loss
     step(predictor_opt, schedulers[1], predictor_loss)
 
-    # Restore flags for validation/checkpointing and log losses separately.
+
     _set_requires_grad(self.model, True)
     _set_requires_grad(idm, True)
     state = {
@@ -809,9 +809,9 @@ def action_innovation_gradient_training_step(self, batch, batch_idx, cfg):
         optimizers = [optimizers]
     if len(optimizers) != 2:
         raise RuntimeError("AIG requires behavior_opt and wm_opt")
-    # Optimizer ordering follows the config declaration.  ``behavior_opt`` is
-    # intentionally declared first so its explicit regex wins over the broad
-    # ``model`` world-model group for the nested behavior_head.
+
+
+
     behavior_opt, wm_opt = optimizers
     schedulers = self.lr_schedulers()
     if schedulers is None:
@@ -833,16 +833,16 @@ def action_innovation_gradient_training_step(self, batch, batch_idx, cfg):
         if scheduler is not None:
             scheduler.step()
 
-    # 1) Nuisance behaviour fit.  Do not make an extra train-mode BatchNorm
-    # update merely to train this tiny head: that would change the baseline
-    # encoder statistics once per batch.
+
+
+
     _set_requires_grad(self.model, False)
     _set_requires_grad(predictor.behavior_head, True)
-    # This extra no-grad encoder pass must not consume the random sequence of
-    # the subsequent LeWM world-model pass.  With this fork, a continued
-    # baseline and AIG see the same dropout masks for their live prediction
-    # forward (given the same initial RNG state), in addition to AIG's exact
-    # numerical forward equivalence at every AdaLN conditioner.
+
+
+
+
+
     rng_devices = []
     if batch["pixels"].is_cuda:
         rng_devices = [batch["pixels"].device.index or torch.cuda.current_device()]
@@ -857,22 +857,22 @@ def action_innovation_gradient_training_step(self, batch, batch_idx, cfg):
         behavior_h.detach(), behavior_actions
     )
     step(behavior_opt, schedulers[0], behavior_loss)
-    # Clear the behaviour-step gradients before the WM pass.  Besides saving
-    # memory, this makes the isolation invariant observable: any gradient on
-    # this head after the prediction backward would be an implementation bug.
+
+
+
     behavior_opt.zero_grad(set_to_none=True)
 
-    # 2) Baseline-forward-equivalent world-model update.  Behavior parameters
-    # stay frozen; prediction loss remains live into both encoder endpoints.
+
+
     _set_requires_grad(self.model, True)
     _set_requires_grad(predictor.behavior_head, False)
     output = forward_step(self, batch, "fit", cfg, aig_reference_action_mean=
         predictor.behavior_mean_from_features(behavior_h.detach(), detach_input=True).detach())
     wm_loss = output["loss"]
 
-    # Audit the principal implementation invariant once per run: AIG must not
-    # accidentally detach the usual prediction objective from the encoder's
-    # input or target endpoint. ``forward_step`` exposes these only for AIG.
+
+
+
     if batch_idx == 0:
         pred_z_t = output.pop("_aig_z_t")
         pred_z_tp1 = output.pop("_aig_z_tp1")
@@ -898,8 +898,8 @@ def action_innovation_gradient_training_step(self, batch, batch_idx, cfg):
             "AIG invariant failed: prediction loss reached behavior_head"
         )
 
-    # Restore normal flags for validation/checkpointing.  The head never sees
-    # a prediction gradient: its reference action was detached before AdaLN.
+
+
     _set_requires_grad(self.model, True)
     state = {
         "loss": wm_loss.detach() + behavior_loss.detach(),
@@ -911,9 +911,9 @@ def action_innovation_gradient_training_step(self, batch, batch_idx, cfg):
         "aig_pred_grad_to_z_t": pred_grad_z_t,
         "aig_pred_grad_to_z_tp1": pred_grad_z_tp1,
     }
-    # ``forward_step`` already logged fit/loss and fit/pred_loss for the live
-    # baseline-forward-equivalent world-model pass. Log AIG-specific quantities
-    # here so there is no duplicate key with a different meaning.
+
+
+
     self.log_dict(
         {
             f"fit/{key}": state[key]
@@ -973,10 +973,10 @@ def predictive_mask_training_step(self, batch, batch_idx, cfg):
         if scheduler is not None:
             scheduler.step()
 
-    # The mask policy is intentionally state-only. Its feature extraction and
-    # target encoding do not update (or alter BatchNorm buffers of) the world
-    # model, but gradients from masked pixels still pass through the frozen
-    # encoder/predictor into the policy's ST score path.
+
+
+
+
     _set_requires_grad(self.model, False)
     _set_requires_grad(policy, True)
     current_pixels = batch["pixels"][:, :history_size]
@@ -1002,9 +1002,9 @@ def predictive_mask_training_step(self, batch, batch_idx, cfg):
             policy_loss = (policy_pred - target_emb).pow(2).mean()
     step(policy_opt, schedulers[0], policy_loss)
 
-    # Re-select after the policy update, freeze its discrete decision, and
-    # train the complete (full-observation) LeWM + Inv + ACA objective with
-    # the additive stopped-target masked branch.
+
+
+
     _set_requires_grad(policy, False)
     _set_requires_grad(self.model, True)
     output = forward_step(self, batch, "fit", cfg)
@@ -1018,10 +1018,10 @@ def predictive_mask_training_step(self, batch, batch_idx, cfg):
             {"pixels": current_pixels, "action": current_actions}, fixed_mask
         )
     masked_pred = self.model.predict(masked_out["emb"], masked_out["act_emb"])
-    # ``forward_step(..., stage="fit")`` deliberately keeps embeddings live
-    # for its base loss but does not expose ``output["emb"]``. Re-encode only
-    # the target endpoint under no-grad for the masked branch's stop-gradient
-    # target, exactly matching the stated objective.
+
+
+
+
     with torch.no_grad(), _freeze_batchnorm_running_stats(self.model):
         world_target_out = self.model.encode(dict(batch))
         world_target_emb = world_target_out["emb"][:, 1 : history_size + 1]
@@ -1029,8 +1029,8 @@ def predictive_mask_training_step(self, batch, batch_idx, cfg):
     world_loss = output["loss"] + beta * masked_loss
     step(wm_opt, schedulers[1], world_loss)
 
-    # Do not leave checkpointing/validation with a frozen policy. The policy
-    # is not used by planning; it is a training-only information selector.
+
+
     _set_requires_grad(self.model, True)
     _set_requires_grad(policy, True)
     masked_ratio = fixed_mask.float().mean()
@@ -1042,9 +1042,9 @@ def predictive_mask_training_step(self, batch, batch_idx, cfg):
         "mask_ratio": masked_ratio.detach(),
         "mask_soft_budget": soft_mask.detach().sum(dim=-1).mean(),
     }
-    # ``forward_step`` has already logged the base LeWM loss. Avoid emitting
-    # the same key twice with a different value; the additive total is kept
-    # separately for experiment tracking.
+
+
+
     self.log_dict(
         {
             "fit/mask_world_loss": state["loss"],
@@ -1085,8 +1085,8 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
     history_size = int(cfg.wm.get("history_size", 1))
     required_steps = history_size + 1
 
-    # A collection step must use only its originating offline state metadata.
-    # All other steps may replace a fraction of transitions with real replay.
+
+
     if stage == "fit" and online_aca and not online_collect:
         batch = self.online_aca_replay.mix(batch)
     batch["action"] = torch.nan_to_num(batch["action"], 0.0)
@@ -1111,10 +1111,10 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
         "masked_transition", "mtm", "transition_jepa"
     )
 
-    # An action-labelled transition is trained as masked endpoint completion:
-    # choose exactly one endpoint per sample, then predict it from the other
-    # endpoint and the *same* logged action.  This is one prediction loss and
-    # one predictor evaluation per item, not forward loss plus a reverse head.
+
+
+
+
     if endpoint_completion:
         direction = torch.rand(z_t.shape[:-1], device=z_t.device) < 0.5
         known_emb = torch.where(direction.unsqueeze(-1), z_t, tgt_emb)
@@ -1126,10 +1126,10 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
         output["loss"] = output["pred_loss"]
         output["edge_forward_ratio"] = direction.float().mean().detach()
 
-    # Masked Transition World Model: every item performs both complementary
-    # queries through the same Transformer.  The action query sees detached
-    # endpoints, so inverse ambiguity cannot distort the encoder; it still
-    # updates all shared predictor parameters and the thin action projection.
+
+
+
+
     if masked_transition:
         pred_emb = self.model.predict(z_t, actions)
         output["pred_loss"] = (pred_emb - tgt_emb).pow(2).mean()
@@ -1149,14 +1149,14 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
             + action_weight * output["mtm_action_loss"]
         )
 
-    # Adversarial Action Mining (ACA): mines, at a fixed radius from the real
-    # action, the nearby impostor action that best fools the *current*
-    # predictor into reproducing the real transition, then requires the real
-    # action to explain that transition strictly better (see
-    # JEPA.adversarial_action_energy).
+
+
+
+
+
     if online_aca:
-        # Online ACA does not optimize a hinge. Instead, its positive-hinge
-        # hard negatives are executed in MuJoCo and return as factual replay.
+
+
         pred_emb = self.model.predict(z_t, act_emb[:, :history_size])
         output["pred_loss"] = (pred_emb - tgt_emb).pow(2).mean()
         output["loss"] = output["pred_loss"]
@@ -1200,7 +1200,7 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
                 actions,
                 tgt_emb,
                 rho=float(aca_cfg.get("rho", 1.0)),
-                noise_scale=0.0,
+                noise_scale=float(aca_cfg.get("noise_scale", 0.0)),
             )
         elif endpoint_completion:
             if adversary != "gradient":
@@ -1214,7 +1214,7 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
                 endpoint_target,
                 forward=direction,
                 rho=float(aca_cfg.get("rho", 1.0)),
-                noise_scale=0.0,
+                noise_scale=float(aca_cfg.get("noise_scale", 0.0)),
                 margin=float(aca_cfg.get("margin", 0.0)),
             )
         elif adversary == "closed_form":
@@ -1251,7 +1251,7 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
                 actions,
                 tgt_emb,
                 rho=float(aca_cfg.get("rho", 1.0)),
-                noise_scale=0.0,
+                noise_scale=float(aca_cfg.get("noise_scale", 0.0)),
                 margin=float(aca_cfg.get("margin", 0.0)),
                 encoder_scale=aca_cfg.get("encoder_scale", "none"),
             )
@@ -1259,18 +1259,18 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
         output["pred_loss"] = aca_out["pred_loss"]
         output["aca_hat_loss"] = aca_out["pred_loss_hat"]
         output["aca_loss"] = aca_out["aca_loss"]
-        # Keep predictor- and encoder-recipient ACA terms separate until the
-        # inverse loss is available below, where the requested loss-ratio
-        # scaling can be computed.
+
+
+
         output["aca_pred_component"] = aca_out.get("aca_loss_pred", aca_out["aca_loss"])
         output["aca_encoder_component"] = aca_out.get("aca_loss_encoder", aca_out["aca_loss"])
         for key in ("aca_margin", "causal_capacity", "causal_min_eig", "aca_minimum_distance", "aca_active_ratio", "aca_factual_energy"):
             if key in aca_out:
                 output[key] = aca_out[key]
         if aca_mode == "counterfactual_only":
-            # This ablation has exactly one forward-energy term: E(a_cf).
-            # ``pred_loss`` is retained purely as a named diagnostic; adding
-            # it again here would accidentally optimize (1 + lambda) E(a_cf).
+
+
+
             output["loss"] = lambd_aca * output["aca_loss"]
         else:
             output["loss"] = output["pred_loss"]
@@ -1288,9 +1288,9 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
                     "NIC innovation loss currently requires history_size=1 "
                     "and the ordinary forward predictor"
                 )
-            # NIC needs two adjacent one-step residuals.  The AR predictor is
-            # instantiated for one history token, so flatten transition
-            # positions into the batch and evaluate the same predictor once.
+
+
+
             n_transitions = emb.size(1) - 1
             if n_transitions < 2:
                 raise ValueError(
@@ -1317,9 +1317,9 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
             output["innov_loss"] = c1.square().mean()
             output["innov_lag1_abs"] = c1.abs().mean().detach()
             output["innov_residual_rms"] = residual.float().square().mean().sqrt().detach()
-            # Every transition used to form the innovation sequence remains
-            # prediction-supervised; the second transition must not become a
-            # regularizer-only example.
+
+
+
             output["pred_loss"] = (pred_seq - emb[:, 1:]).pow(2).mean()
             pred_emb = pred_seq[:, :history_size]
         else:
@@ -1332,19 +1332,19 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
             output["pred_loss"] = (pred_emb - tgt_emb).pow(2).mean()
         output["loss"] = output["pred_loss"]
 
-    # Epoch-active ACA is a data-generation mechanism, not a loss term.  The
-    # current batch is still trained with the ordinary forward/inverse loss;
-    # its original rows merely contribute one (action, hinge) record to the
-    # global ranker.  Added rows are marked replay_id=-1 and never re-mined.
+
+
+
+
     if stage == "fit" and epoch_active_aca:
         mined = self.epoch_active_aca.mine(
             self.model, batch, z_t, actions, tgt_emb, self.global_step
         )
         output["epoch_aca_positive_batch"] = output["pred_loss"].new_tensor(float(mined))
 
-    # The AIG manual update validates once that the ordinary prediction loss
-    # remains connected to both encoder endpoints.  These private values are
-    # removed before the custom training step returns and are never logged.
+
+
+
     if cfg.loss.get("aig", {}).get("weight", 0.0) and stage == "fit":
         output["_aig_z_t"] = z_t
         output["_aig_z_tp1"] = tgt_emb
@@ -1356,22 +1356,22 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
                 "set loss.inverse.weight=0"
             )
         if inverse_type == "iipdc":
-            # Blind step: trains only the blind predictor, on detached z_t/z_tp1
-            # so no gradient reaches the encoder through this term.
+
+
             blind_out = self.blind(z_t.detach())
             output["blind_loss"] = (blind_out - tgt_emb.detach()).pow(2).mean()
             output["loss"] = output["loss"] + output["blind_loss"]
 
-            # World step: blind_ref is computed from the live z_t (so the blind
-            # predictor keeps tracking the current encoder), but IIPDCHead
-            # stop-gradients it internally, isolating blind from the encoder/
-            # action-predictor/Q update carried by this term.
+
+
+
+
             blind_ref = self.blind(z_t)
             output["inv_loss"] = self.iipdc(pred_emb, blind_ref, actions)
         else:
-            # Preserve the factual InvReg objective exactly: it sees the two
-            # real encoded endpoints and therefore retains its original
-            # encoder/IDM gradients.
+
+
+
             pred_actions = self.model.predict_action(emb[:, :-1], emb[:, 1:])
             output["inv_loss"] = (pred_actions - batch["action"][:, :-1]).pow(2).mean()
         output["loss"] = output["loss"] + lambd_inv * output["inv_loss"]
@@ -1412,10 +1412,10 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
         output["gradient_penalty_grad_norm"] = grad_out["gradient_penalty_grad_norm"]
         output["loss"] = output["loss"] + float(lambd_gradient_penalty) * grad_out["gradient_penalty_loss"]
 
-    # ACA predictor gradients stay unscaled.  Only its encoder-side copy is
-    # multiplied so its scale matches the loss magnitude received by the
-    # encoder versus the predictor (prediction + inverse, divided by the
-    # predictor's prediction loss).  All ratio statistics are detached.
+
+
+
+
     if lambd_aca and "aca_pred_component" in output and aca_mode != "counterfactual_only":
         aca_cfg = cfg.loss.aca
         mode = str(aca_cfg.get("encoder_scale", "none"))
@@ -1431,13 +1431,13 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
                 + ratio * output["aca_encoder_component"]
             )
         else:
-            # Historical/default behavior: one ordinary ACA hinge only.
+
             output["aca_encoder_scale"] = output["aca_pred_component"].new_tensor(0.0)
             output["loss"] = output["loss"] + lambd_aca * output["aca_loss"]
 
     if lambd_cai:
-        # CAI estimator best-response losses are evaluated on detached
-        # representations, so only the explicit CAI repair term updates E.
+
+
         cai_actions = batch["action"][:, :history_size]
         cai_z_t = z_t.detach()
         cai_z_tp1 = tgt_emb
@@ -1447,8 +1447,8 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
         trans_loss = (trans_pred - cai_actions).pow(2).mean()
         output["cai_blind_loss"] = blind_loss
         output["cai_trans_loss"] = trans_loss
-        # Freeze estimator parameters for the repair pass while preserving
-        # d(loss)/d(z_{t+1}); z_t is detached and cannot be used as a shortcut.
+
+
         req_blind = [p.requires_grad for p in self.cai_blind.parameters()]
         req_trans = [p.requires_grad for p in self.cai_transition.parameters()]
         for p in self.cai_blind.parameters(): p.requires_grad_(False)
@@ -1497,10 +1497,10 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
         output["loss"] = output["loss"] + lambd_pdc * output["pdc_loss"]
 
         if cfg.loss.pdc.get("jensen", False):
-            # Jensen-PDC: counterfactual action a_cf via batch permutation
-            # (a valid, in-distribution action), midpoint action a_m =
-            # (a+a_cf)/2. z_next is kept differentiable (real embedding, not
-            # detached) so this shapes the encoder, not only the predictor.
+
+
+
+
             perm = torch.randperm(emb.size(0), device=emb.device)
             actions_cf = actions[perm]
             actions_mid = 0.5 * (actions + actions_cf)
@@ -1521,8 +1521,8 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
         output["loss"] = output["loss"] + lambd_geo_pdc * output["geo_pdc_loss"]
 
     if lambd_as_pdc:
-        # Counterfactual action a_cf: permute the logged (normalized) actions
-        # across the batch -> a valid, in-distribution action, not synthetic.
+
+
         perm = torch.randperm(emb.size(0), device=emb.device)
         actions_cf = actions[perm]
         act_emb_cf = (
@@ -1530,10 +1530,10 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
             if self.model.action_encoder is not None
             else actions_cf
         )
-        # Counterfactual future under the SAME state z_t: F(z_t, a_cf).
+
         cf_pred = self.model.predict(z_t, act_emb_cf)
-        # One endpoint is the real next embedding tgt_emb (kept differentiable
-        # so this constrains the encoder, not only the predictor).
+
+
         output["as_pdc_loss"] = self.as_pdc(
             tgt_emb, cf_pred, actions, actions_cf
         )
@@ -1569,9 +1569,18 @@ def forward_step(self, batch, stage, cfg, aig_reference_action_mean=None):
 
 @hydra.main(version_base=None, config_path=None, config_name=None)
 def run(cfg):
-    # ACA package deliberately exposes only the four supported objectives.
-    # Keep legacy fields internally for checkpoint compatibility, but reject
-    # accidental activation of unrelated research methods.
+
+
+
+
+
+
+    pl.seed_everything(int(cfg.seed), workers=True)
+    print(f"Pre-initialization seed fixed at cfg.seed={int(cfg.seed)}.")
+
+
+
+
     forbidden = ("action_normal", "random_aca", "gradient_penalty", "si", "innov",
                  "rsi", "aig", "cai", "pdc", "geo_pdc", "as_pdc", "delta_lift")
     active = [name for name in forbidden if float(cfg.loss.get(name, {}).get("weight", 0.0) or 0.0) != 0.0]
@@ -1581,13 +1590,13 @@ def run(cfg):
         raise ValueError("ACA package training requires predictor.type=ar")
     if bool(cfg.loss.get("predictive_mask", {}).get("enabled", False)):
         raise ValueError("predictive_mask is not part of the ACA package")
-    # Action-Normal and SI-WM differentiate through an action gradient
-    # (``autograd.grad(create_graph=True)``), which requires a second backward
-    # through every operation in the predictor.  CUDA FlashAttention,
-    # memory-efficient SDPA, and cuDNN SDPA do not implement that higher-order
-    # derivative in all supported PyTorch/CUDA combinations.  Force the
-    # reference math SDPA backend for these objectives; ordinary training keeps
-    # the faster fused kernels.
+
+
+
+
+
+
+
     higher_order_loss = (
         bool(cfg.loss.get("action_normal", {}).get("weight", 0.0))
         or bool(cfg.loss.get("gradient_penalty", {}).get("weight", 0.0))
@@ -1631,11 +1640,11 @@ def run(cfg):
         if counterfactual_enabled and not counterfactual_cfg.get("path"):
             raise ValueError("data.counterfactual.path is required when enabled=true")
         if counterfactual_enabled and bool(counterfactual_cfg.get("only", False)):
-            # A one-epoch adaptation on collected transitions has no held-out
-            # counterfactual validation split.  Its short epoch can also be
-            # shorter than the base config's 500-step validation interval.
-            # Disable validation rather than constructing an unrelated
-            # original-dataset validation pass.
+
+
+
+
+
             cfg.trainer.limit_val_batches = 0.0
         if online_aca or epoch_active_aca:
             required_online_columns = ("qpos", "qvel", "target_pos", "id")
@@ -1644,8 +1653,8 @@ def run(cfg):
                 if key not in cfg.data.dataset.keys_to_load:
                     cfg.data.dataset.keys_to_load.append(key)
 
-    # Keep this base dataset even when training only counterfactual samples:
-    # its atomic action mean/std are the coordinate system of the checkpoint.
+
+
     base_train_set = swm.data.HDF5Dataset(**cfg.data.dataset, transform=None)
     subset_cfg = cfg.data.get("subset", {})
     subset_indices_path = subset_cfg.get("episode_indices", None)
@@ -1670,7 +1679,7 @@ def run(cfg):
         missing = [key for key in required_online_columns if key not in base_train_set.h5_file]
         if missing:
             raise KeyError(f"online ACA requires HDF5 columns {missing}")
-    # Read only the physical pixel column; merged cached keys may not exist in HDF5.
+
     base_train_set._open()
     pixel_shape = base_train_set.h5_file["pixels"][0].shape
     pixel_hw = tuple(pixel_shape[:2]) if len(pixel_shape) >= 2 else ()
@@ -1686,15 +1695,15 @@ def run(cfg):
 
     with open_dict(cfg):
         if online_aca or epoch_active_aca:
-            # The collector/replay lives in the Lightning process; forked
-            # workers would retain stale dataset handles and cannot observe it.
+
+
             cfg.loader.num_workers = 0
             cfg.loader.persistent_workers = False
             cfg.loader.pop("prefetch_factor", None)
-            # The environment lives in the training process and appends a
-            # mutable dataset at epoch boundaries.  This is intentionally one
-            # GPU; distributed ranks would otherwise each generate a separate
-            # and nondeterministic replay file.
+
+
+
+
             cfg.trainer.devices = 1
         macro_transforms = list(transforms)
         metadata_columns = {"id", "qpos", "qvel", "target_pos"}
@@ -1783,6 +1792,13 @@ def run(cfg):
         f"max_steps={scheduler_max_steps} (per rank)."
     )
 
+
+
+
+
+    pl.seed_everything(int(cfg.seed), workers=True)
+    print(f"Model-initialization seed fixed at cfg.seed={int(cfg.seed)}.")
+
     encoder = spt.backbone.utils.vit_hf(
         cfg.encoder_scale,
         patch_size=cfg.patch_size,
@@ -1798,17 +1814,17 @@ def run(cfg):
     predictor_kwargs = {
         k: v for k, v in cfg.predictor.items() if k != "type"
     }
-    # These predictors operate in raw normalized action coordinates.  AIG
-    # deliberately does *not* appear here: it preserves the normal LeWM
-    # action embedder and AdaLN conditioner exactly.
+
+
+
     use_raw_actions = predictor_type in ("aft", "cafe", "laf", "masked_transition", "mtm", "transition_jepa")
 
-    # AFT's action-faithfulness identity (Q(z)^T[T(z,a)-T(z,0)] = a) only
-    # holds for the predictor's own output. Any nonlinear pred_proj applied
-    # afterwards could re-collapse the action-transport term it guarantees,
-    # so AFT must predict directly into the target embed_dim space and skip
-    # pred_proj entirely (unlike ARPredictor, which predicts into hidden_dim
-    # and relies on pred_proj to project down to embed_dim).
+
+
+
+
+
+
     predictor_output_dim = embed_dim if use_raw_actions else hidden_dim
 
     inverse_type = cfg.inverse.get("type", "mlp")
@@ -1896,9 +1912,9 @@ def run(cfg):
             hidden_dim=2048,
             norm_fn=torch.nn.BatchNorm1d,
         ),
-        # II-PDC replaces the free-form InverseModel with BlindPredictor +
-        # IIPDCHead (constructed below, attached to the Lightning Module
-        # instead of JEPA -- same pattern as PDCHead/GeoPDCHead/SIGReg).
+
+
+
         inverse_model=InverseModel(
             embed_dim=embed_dim,
             action_dim=effective_act_dim,
@@ -1909,14 +1925,14 @@ def run(cfg):
     )
 
     model_opt = {
-        # II-PDC's BlindPredictor/IIPDCHead and AS-PDC's ASPDCHead all
-        # carry learnable parameters (blind MLP, learnable orthogonal
-        # Q) attached as top-level `self.blind`/`self.iipdc`/
-        # `self.as_pdc` attributes (same pattern as sigreg/pdc/geo_pdc
-        # below), so they must be included here too or their
-        # parameters are silently never optimized (regex match
-        # determines which params get an optimizer at all -- no match
-        # means no gradient step).
+
+
+
+
+
+
+
+
         "modules": "model|blind|iipdc|as_pdc|cai_blind|cai_transition",
         "optimizer": dict(cfg.optimizer),
         "interval": "epoch",
@@ -1930,10 +1946,10 @@ def run(cfg):
             "eta_min": 0.0,
         }
     else:
-        # ``stable_pretraining.Module`` uses a cosine scheduler by default
-        # for every entry in the multi-optimizer form when the key is absent.
-        # Supply an identity ConstantLR explicitly so fixed-LR experiments
-        # remain exactly at optimizer.lr instead of silently decaying to zero.
+
+
+
+
         model_opt["scheduler"] = {
             "type": "ConstantLR",
             "factor": 1.0,
@@ -1966,10 +1982,10 @@ def run(cfg):
             temperature=float(cfg.loss.predictive_mask.temperature),
             base_seed=int(cfg.loss.predictive_mask.base_seed),
         )
-        # Put the explicit policy group first: stable_pretraining assigns the
-        # first matching module group, so it cannot leak into the broad world
-        # optimizer. Both are stepped once per batch and share the matched
-        # fixed-horizon cosine schedule.
+
+
+
+
         module_kwargs["optim"] = {
             "policy_opt": {
                 "modules": "mask_policy",
@@ -1985,8 +2001,8 @@ def run(cfg):
             },
         }
     if use_rsi_game:
-        # These are deliberately disjoint: the game has three opposed updates
-        # rather than one shared loss backward pass.
+
+
         module_kwargs["optim"] = {
             "encoder_opt": {
                 "modules": "model.encoder|model.projector",
@@ -2008,9 +2024,9 @@ def run(cfg):
             },
         }
     if use_aig:
-        # The behavior head is listed first: the grouping utility assigns the
-        # first explicit regex match, so this excludes it from the broad
-        # ``model`` world-model optimizer below.
+
+
+
         module_kwargs["optim"] = {
             "behavior_opt": {
                 "modules": "model.predictor.behavior_head",
@@ -2101,15 +2117,15 @@ def run(cfg):
             normalized_low, normalized_high, cfg.img_size, cfg.seed,
         )
     if use_rsi_game:
-        # stable_pretraining.Module's default manual loop assumes one joint
-        # loss.  Replace only the training hook; validation still calls the
-        # ordinary forward prediction path for baseline-compatible monitoring.
+
+
+
         module.training_step = lambda batch, batch_idx: forward_inverse_game_training_step(
             module, batch, batch_idx, cfg
         )
     if use_aig:
-        # AIG has a separate nuisance-mean update; validation/planning keep
-        # the ordinary numerical LeWM forward path.
+
+
         module.training_step = lambda batch, batch_idx: action_innovation_gradient_training_step(
             module, batch, batch_idx, cfg
         )
@@ -2127,9 +2143,9 @@ def run(cfg):
     run_dir = run_root / run_id if run_id else run_root
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Do this before creating Manager. Manager resumes exclusively from the
-    # current run's checkpoints/last.ckpt, while the copy preserves source
-    # weights/optimizer/LR state as well as protecting the source run.
+
+
+
     if cfg.get("resume_from_checkpoint"):
         retarget_scheduler = bool(
             cfg.get("resume", {}).get("retarget_scheduler", False)

@@ -124,7 +124,39 @@ PROTOCOLS: dict[str, ProtocolSpec] = {
         success_mode="task-sustained",
         min_difficulty={},
     ),
-    # v0.1 names remain registered so existing manifests stay executable.
+    "strict-heldout": ProtocolSpec(
+        name="strict-heldout",
+        description=(
+            "Strict task-semantic evaluation on a dataset that is already a "
+            "held-out episode split. All episodes in the supplied dataset are "
+            "eligible held-out episodes."
+        ),
+        sampling="episode-balanced",
+        split="heldout",
+        heldout_fraction=1.0,
+        exclude_initial_success=True,
+        cube_position_threshold_m=0.03,
+        cube_orientation_threshold_deg=15.0,
+        cube_symmetry_aware=True,
+        pusht_position_threshold=10.0,
+        pusht_angle_threshold_deg=10.0,
+        pusht_block_only=True,
+        reacher_success_mode="endpoint",
+        reacher_endpoint_threshold_m=0.01,
+        tworoom_distance_threshold=8.0,
+        tworoom_crossroom_only=True,
+        tworoom_source_window_clean=True,
+        tworoom_route_required=True,
+        tworoom_goal_side_required=True,
+        tworoom_collision_mode="swept",
+        sustained_steps=1,
+        pusht_sustained_steps=3,
+        cube_sustained_steps=3,
+        reacher_sustained_steps=2,
+        success_mode="task-sustained",
+        min_difficulty={},
+    ),
+
     "official-compat": ProtocolSpec(
         name="official-compat",
         description=(

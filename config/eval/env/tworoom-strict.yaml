@@ -1,4 +1,31 @@
 # @package _global_
 defaults:
-  - tworoom
+
+
+
+  - /eval/base
   - _self_
+
+world:
+  env_name: swm/TwoRoom-v1
+  frame_skip: 1
+
+dataset:
+  cache_dir: /root/autodl-tmp/sensorimotor-world-model/planning/data/external
+  keys_to_cache:
+    - action
+    - proprio
+    - pos_agent
+    - pos_target
+
+eval:
+  dataset_name: tworoom
+  callables:
+    - method: _set_state
+      args:
+        state:
+          value: pos_agent
+    - method: _set_goal_state
+      args:
+        goal_state:
+          value: goal_pos_agent

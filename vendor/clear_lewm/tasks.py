@@ -95,7 +95,7 @@ def cube_symmetry_angle_deg(q0: np.ndarray, q1: np.ndarray) -> np.ndarray:
     current = _quaternion_matrix_wxyz(q0)
     target = _quaternion_matrix_wxyz(q1)
     relative = np.swapaxes(current, -1, -2) @ target
-    # trace(relative @ symmetry) without materializing an N x 24 x 3 x 3 tensor.
+
     traces = np.einsum(
         "...ij,kji->...k", relative, CUBE_SYMMETRY_MATRICES, optimize=True
     )

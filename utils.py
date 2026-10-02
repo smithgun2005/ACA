@@ -80,13 +80,29 @@ def load_composed_config(config_path):
 
     os.environ.setdefault("REPO_ROOT", str(Path(__file__).resolve().parent))
     config_path = Path(config_path).expanduser().resolve()
+
+
+
+
+
+
+    config_root = config_path.parent
+    config_name = config_path.stem
+    repo_config = Path(os.environ["REPO_ROOT"]) / "config"
+    try:
+        relative = config_path.relative_to(repo_config)
+        if relative.parts[:2] == ("eval", "env"):
+            config_root = repo_config
+            config_name = relative.with_suffix("").as_posix()
+    except ValueError:
+        pass
     GlobalHydra.instance().clear()
     with initialize_config_dir(
         version_base=None,
-        config_dir=str(config_path.parent),
+        config_dir=str(config_root),
         job_name=config_path.stem,
     ):
-        return compose(config_name=config_path.stem)
+        return compose(config_name=config_name)
 
 
 class ModelObjectCallBack(Callback):
@@ -125,8 +141,8 @@ def _effective_rank(x: torch.Tensor) -> float:
     x = x.float()
     centered = x - x.mean(dim=0, keepdim=True)
     cov = centered.T @ centered
-    # Symmetrize and add a tiny diagonal jitter: low-rank/repeated validation
-    # embeddings can otherwise make eigh fail to converge.
+
+
     cov = (cov + cov.T) * 0.5
     scale = cov.diagonal().abs().mean().clamp_min(1.0)
     try:

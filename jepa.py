@@ -23,34 +23,34 @@ class JEPA(nn.Module):
         super().__init__()
         self.encoder = encoder
         self.predictor = predictor
-        # None means the predictor consumes raw (unembedded) actions directly,
-        # e.g. AFTPredictor, which needs the actual action vector to build an
-        # identifiable action-transport term rather than an opaque embedding.
+
+
+
         self.action_encoder = action_encoder
         self.projector = projector or nn.Identity()
         self.pred_proj = pred_proj or nn.Identity()
         self.inverse_model = inverse_model
-        # Optional post-hoc Action-Residual FWM.  It is deliberately absent
-        # from ordinary checkpoints/training; an external artifact may attach
-        # a frozen block after the base model has finished training.
+
+
+
         self.action_residual_fwm = None
         self.self_conditioned_residual_fwm = None
         self.self_conditioned_residual_uses_idm_error = False
-        # Optional Latent Flow Residual Closure.  Unlike the legacy residual
-        # modules it receives neither action nor target information: it only
-        # closes the base predictor's proposed latent vector field.
+
+
+
         self.latent_flow_residual_closure = None
         self.latent_flow_residual_alpha = 1.0
         self.idm_gap_latent_flow_residual_closure = None
         self.idm_gap_latent_flow_residual_alpha = 1.0
-        # Reafferent coordinate: overwrite the last embedding dimension with a
-        # zero-parameter, non-learnable measure of real pixel change between
-        # consecutive frames. Unlike the rest of the embedding, the encoder
-        # cannot collapse this coordinate to a constant, since it never passes
-        # through any learned layer on the target side. The fixed (not
-        # learned) scale just brings raw pixel-space RMS energy onto a
-        # magnitude comparable to the BatchNorm'd learned coordinates, so the
-        # MSE loss doesn't implicitly ignore it.
+
+
+
+
+
+
+
+
         self.grounded_coordinate = bool(grounded_coordinate)
         self.grounded_coordinate_scale = float(grounded_coordinate_scale)
         image_size = getattr(getattr(self.encoder, "config", None), "image_size", None)
@@ -156,8 +156,8 @@ class JEPA(nn.Module):
         pixel_mask = mask_grid.repeat_interleave(patch_h, -2).repeat_interleave(patch_w, -1)
         pixel_mask = rearrange(pixel_mask, "b t h w -> (b t) 1 h w").to(raw_pixels.dtype)
 
-        # Compute sensory grounding from the original observation, not from
-        # artificial black-mask boundaries.
+
+
         energy = None
         if self.grounded_coordinate:
             energy = self._pixel_change_energy(
@@ -182,13 +182,6 @@ class JEPA(nn.Module):
 
     @staticmethod
     def _pixel_change_energy(pixels: torch.Tensor) -> torch.Tensor:
-        """Zero-parameter reafferent coordinate: RMS pixel change per frame.
-
-        pixels: (b, t, c, h, w), resized but NOT ImageNet-normalized (so the
-        magnitude reflects real sensory change, not an arbitrary affine
-        rescaling). Returns (b, t): energy[:, 0] = 0 (no earlier frame in this
-        window to diff against), energy[:, i] = RMS(x_i - x_{i-1}) for i >= 1.
-        """
         b, t = pixels.shape[:2]
         if t == 1:
             return pixels.new_zeros(b, 1)
@@ -198,7 +191,6 @@ class JEPA(nn.Module):
         return torch.cat([zeros, energy], dim=1)
 
     def encode(self, info):
-        """Encode observations and actions into embeddings."""
         pixels = info["pixels"]
         b = pixels.size(0)
         if pixels.ndim == 4:
@@ -214,20 +206,13 @@ class JEPA(nn.Module):
 
         pixels = self._normalize_pixels(pixels)
         output = self.encoder(pixels, interpolate_pos_encoding=True)
-        pixels_emb = output.last_hidden_state[:, 0]  # cls token
-        # Kept alongside the projected latent only for optional training-only
-        # objectives (e.g. predictive patch selection). Existing callers use
-        # ``emb`` and are unchanged.
+        pixels_emb = output.last_hidden_state[:, 0]
         info["cls_features"] = rearrange(
             pixels_emb, "(b t) d -> b t d", b=b
         )
         emb = self.projector(pixels_emb)
         emb = rearrange(emb, "(b t) d -> b t d", b=b)
         if energy is not None:
-            # Overwrite the last coordinate with the real, non-learnable
-            # sensory-change signal. It never passes through the projector
-            # (already applied above) or any later learned layer, so no
-            # learnable module can collapse it back to a constant.
             emb = torch.cat([emb[..., :-1], energy.to(emb.dtype).unsqueeze(-1)], dim=-1)
         info["emb"] = emb
 
@@ -263,9 +248,8 @@ class JEPA(nn.Module):
                     "A self-conditioned residual FWM is attached, so predict() "
                     "needs raw normalized actions via raw_actions=."
                 )
-            # Detach only the residual block's *condition*, not the base
-            # prediction on the additive path.  Thus P receives the final
-            # prediction loss, while R cannot alter P through its input.
+
+
             base_delta = (preds - emb).detach()
             residual_condition = raw_actions
             if self.self_conditioned_residual_uses_idm_error:
@@ -273,14 +257,7 @@ class JEPA(nn.Module):
                     raise RuntimeError(
                         "SC-ResFWM IDM-error conditioning requires an inverse model"
                     )
-                # The residual stage receives a diagnostic of how internally
-                # self-consistent P's proposed transition is with the frozen
-                # InvReg IDM, not the logged action itself.  This condition is
-                # detached, so it cannot change P or I through this branch.
-                # Keep only the direct ``-a`` derivative.  The IDM proposal
-                # is stop-gradient, so R cannot manipulate P or I through
-                # its diagnostic input, while ACA can still differentiate the
-                # complete residual predictor with respect to a candidate a.
+
                 residual_condition = (
                     self.inverse_model(emb.detach(), preds.detach()).detach()
                     - raw_actions
@@ -302,23 +279,15 @@ class JEPA(nn.Module):
                 raise ValueError("IDM-gap LFR needs raw normalized actions via raw_actions=")
             if self.inverse_model is None:
                 raise RuntimeError("IDM-gap LFR requires an inverse dynamics model")
-            # This is deliberately a frozen diagnostic at inference: CEM's
-            # candidate action is compared with the action represented by P's
-            # own proposed endpoint, without access to goal/real future data.
+
+
+
             action_gap = raw_actions - self.inverse_model(emb, preds)
             preds = preds + float(self.idm_gap_latent_flow_residual_alpha) * \
                 self.idm_gap_latent_flow_residual_closure(emb, preds - emb, action_gap)
         return preds
 
     def predict_with_features(self, emb, actions):
-        """PC-WM predictor evaluation with its action-conditioned hidden state.
-
-        ``actions`` are always raw normalized action coordinates.  The result
-        is detached by the PC-WM trainer/planner, which keeps correction
-        gradients completely outside the encoder and forward predictor.
-        Currently this is defined for the original LeWM AR/AdaLN predictor,
-        whose hidden feature has an unambiguous action-conditioned meaning.
-        """
         if not hasattr(self.predictor, "forward_with_features"):
             raise TypeError(
                 "PC-WM requires predictor.type=ar (AdaLN ARPredictor)"
@@ -361,13 +330,6 @@ class JEPA(nn.Module):
         return self.predictor.complete_action(z_t, z_next)
 
     def complete_endpoint(self, known_emb, act_emb, forward):
-        """Complete either endpoint of an action-labelled transition.
-
-        ``forward=True`` is the ordinary rollout interface.  ``forward=False``
-        predicts the predecessor while retaining the same executed action.
-        This is intentionally restricted to the endpoint-completion predictor
-        so ordinary AR/AFT/CAFE predictors retain their current semantics.
-        """
         if not getattr(self.predictor, "is_endpoint_completion", False):
             raise TypeError(
                 "complete_endpoint requires predictor.type=endpoint_completion"
@@ -377,7 +339,6 @@ class JEPA(nn.Module):
         return rearrange(preds, "(b t) d -> b t d", b=known_emb.size(0))
 
     def predict_with_causal_map(self, emb, actions):
-        """CAFE prediction plus its local control map ``C(z)``."""
         if not hasattr(self.predictor, "forward_with_causal_map"):
             raise TypeError("Closed-form ACA requires a CAFEPredictor")
         if not isinstance(self.pred_proj, nn.Identity):
@@ -385,19 +346,10 @@ class JEPA(nn.Module):
         return self.predictor.forward_with_causal_map(emb, actions)
 
     def closed_form_aca(self, z_t, actions, tgt_emb, rho):
-        """Exact quadratic hardest-action ACA for CAFE.
-
-        The weakest ``C.T @ C`` eigen-direction yields the counterfactual;
-        its sign is selected analytically from the factual residual. The hinge
-        uses the actual squared displacement after legal-action clamping.
-        """
         if rho <= 0:
             raise ValueError("CAFE closed-form ACA requires rho > 0")
         pred_emb, C = self.predict_with_causal_map(z_t, actions)
         residual = pred_emb - tgt_emb
-        # CUDA does not implement eigh for bfloat16.  Autocast may otherwise
-        # downcast this operation even when its inputs were explicitly cast,
-        # so keep only the tiny m x m spectral calculation in float32.
         with torch.autocast(device_type=C.device.type, enabled=False):
             C_fp32 = C.float()
             gram = torch.einsum("...dm,...dn->...mn", C_fp32, C_fp32)
@@ -405,11 +357,11 @@ class JEPA(nn.Module):
         v_min = eigvecs[..., 0].to(actions.dtype)
         Cv = torch.einsum("...dm,...m->...d", C, v_min)
         alignment = (residual * Cv).sum(dim=-1, keepdim=True)
-        # At exactly zero alignment both signs have equal quadratic energy.
+
         sign = torch.where(alignment < 0, torch.ones_like(alignment), -torch.ones_like(alignment))
         candidate = actions.detach() + float(rho) * sign * v_min.detach()
 
-        # Existing ACA convention: batch extrema approximate legal bounds.
+
         lo = actions.detach().amin(dim=(0, 1), keepdim=True)
         hi = actions.detach().amax(dim=(0, 1), keepdim=True)
         hat_a = candidate.clamp(min=lo, max=hi)
@@ -436,23 +388,12 @@ class JEPA(nn.Module):
     def self_inverting_action_denoising(
         self, z_t, actions, tgt_emb, sigma, step_size=None, create_graph=True
     ):
-        """Use the forward residual energy to denoise a noisy action.
-
-        ``E(z, a, z') = 1/2 ||P(z, a) - z'||^2`` is both the ordinary forward
-        objective and SI-WM's action energy. One score step from a noisy action
-        must recover the factual action. Training this field requires mixed
-        action/parameter second derivatives, hence ``create_graph=True``.
-        """
         sigma = float(sigma)
         if sigma <= 0.0:
             raise ValueError("SI-WM requires loss.si.sigma > 0")
         eta = sigma * sigma if step_size is None else float(step_size)
         if eta <= 0.0:
             raise ValueError("SI-WM requires loss.si.step_size > 0")
-
-        # Stop endpoint gradients only for SI-WM. The factual prediction loss
-        # still learns the encoder; this branch calibrates P_phi's action
-        # energy rather than allowing encoder targets to satisfy its score.
         with torch.enable_grad():
             noisy_actions = (
                 actions.detach() + sigma * torch.randn_like(actions)
@@ -488,17 +429,6 @@ class JEPA(nn.Module):
         self, z_t, actions, tgt_emb, rho, margin, top_fraction, max_samples,
         action_low, action_high,
     ):
-        """Mine and select the hardest positive-hinge ACA actions.
-
-        This exactly follows ACA's one-step projected energy descent:
-
-            a_hat = Pi_A(a - rho * grad_a E / ||grad_a E||).
-
-        There is one mined counterfactual per factual transition -- no random
-        candidate population and no hinge backpropagation.  Among transitions
-        whose ordinary ACA hinge is positive, this returns the largest
-        ``top_fraction`` for real-environment execution.
-        """
         if rho <= 0 or not 0 < top_fraction <= 1:
             raise ValueError("invalid online ACA sampling hyperparameters")
         mined_actions, hinge = self.mine_aca_actions(
@@ -521,18 +451,9 @@ class JEPA(nn.Module):
     def mine_aca_actions(
         self, z_t, actions, tgt_emb, rho, margin, action_low, action_high,
     ):
-        """Return one native ACA action and its hinge for every input row.
-
-        Unlike ``sample_positive_aca_actions``, this deliberately performs no
-        local top-k selection. Epoch-active collection needs all positive
-        values across the complete offline epoch before it can correctly keep
-        the global top fraction.
-        """
         if rho <= 0:
             raise ValueError("rho must be positive for ACA action mining")
-        # Online-ACA bounds originate from CPU HDF5 statistics and are held
-        # outside JEPA as module metadata. Move them lazily so each DDP rank
-        # clamps on its local CUDA device (and keeps the action dtype).
+
         action_low = action_low.to(device=actions.device, dtype=actions.dtype)
         action_high = action_high.to(device=actions.device, dtype=actions.dtype)
 
@@ -569,51 +490,7 @@ class JEPA(nn.Module):
         self, z_t, actions, tgt_emb, rho, noise_scale=0.0, margin=0.0,
         encoder_scale="none",
     ):
-        """Adversarial Action Mining (ACA).
 
-        Defines the action-conditioned prediction energy
-            E(a) = || F(z_t, a) - z_{t+1} ||^2
-        and mines, at a fixed radius rho from the real action a_t, the
-        nearby impostor action hat_a that the *current* predictor confuses
-        most with a_t (i.e. locally minimizes E under a first-order model of
-        E around a_t: hat_a = a_t - rho * grad_a E(a_t) / ||grad_a E(a_t)||).
-        The real action is then required to explain the real transition
-        strictly better than this hardest nearby impostor, by at least
-        `margin`, via a hinge ranking loss:
-
-            L_ACA = relu(margin + E(a_t) - E(hat_a))
-
-        Once the real action already beats the impostor by >= margin, the
-        loss is exactly zero and stops contributing gradient -- unlike
-        softplus, which keeps pushing (with vanishing but nonzero slope) even
-        once the ranking is satisfied. The trade-off: with margin=0 this
-        loss goes fully flat (zero loss AND zero gradient) for a predictor
-        that ignores the action entirely (E(a_t) == E(hat_a) exactly hits the
-        hinge's zero boundary), so margin should be set > 0 whenever that
-        failure mode needs to stay penalized.
-
-        The standalone implementation uses a deterministic normalized
-        gradient direction; no random exploration noise is injected.
-
-        Pi_A (the legal-action projection) is approximated by clamping each
-        action dimension to the range observed in the current batch, since
-        actions here are already dataset-normalized continuous vectors with
-        no explicit declared bounds.
-
-        z_t:      (B, T, D)          - live encoder states (grad-carrying).
-        actions:  (B, T, action_dim) - real, normalized logged actions a_t.
-        tgt_emb:  (B, T, D)          - real next-step embeddings z_{t+1}.
-        rho:      fixed perturbation radius for the impostor action.
-        noise_scale: retained for config compatibility; ACA ignores it.
-        Returns a dict with "pred_emb" and "pred_loss" (the real-action
-        prediction and its MSE, so the caller doesn't need a second real-
-        action forward pass), "pred_loss_hat" (impostor energy), and
-        "aca_loss" (the hinge ranking loss).
-        """
-        # Lightning runs validate/test under torch.no_grad(); the impostor
-        # mining still needs a local autograd graph w.r.t. the action (even
-        # though nothing here ultimately gets .backward()'d outside "fit"),
-        # so re-enable it just for this block.
         with torch.enable_grad():
             actions_for_grad = actions.detach().clone().requires_grad_(True)
             act_emb_for_grad = (
@@ -623,12 +500,6 @@ class JEPA(nn.Module):
             )
             pred_emb = self.predict(z_t, act_emb_for_grad)
             energy = (pred_emb - tgt_emb).pow(2).sum(dim=-1)
-            # allow_unused: a predictor that architecturally never reads the
-            # action (a fully dead branch, not just a near-zero-gradient one)
-            # gives a `None` grad here. That is itself the worst-case
-            # action-ignoring predictor this loss exists to catch, so treat
-            # it as an all-zero gradient rather than erroring -- the noise
-            # term below then supplies the only search direction.
             (grad_a,) = torch.autograd.grad(
                 energy.sum(), actions_for_grad, retain_graph=True, allow_unused=True
             )
@@ -636,15 +507,11 @@ class JEPA(nn.Module):
                 grad_a.detach() if grad_a is not None else torch.zeros_like(actions_for_grad)
             )
 
-        direction = grad_a
+        direction = grad_a + float(noise_scale) * torch.randn_like(grad_a)
         direction = direction / (direction.norm(dim=-1, keepdim=True) + 1e-8)
 
         lo = actions.detach().amin(dim=(0, 1), keepdim=True)
         hi = actions.detach().amax(dim=(0, 1), keepdim=True)
-        # Gradient ascent would move towards higher energy (worse impostor);
-        # subtracting the direction searches for the *hardest* impostor, i.e.
-        # the nearby action that (locally) best fools the predictor into
-        # reproducing the real transition.
         hat_a = (actions.detach() - rho * direction).clamp(min=lo, max=hi)
 
         act_emb_hat = (
@@ -653,13 +520,6 @@ class JEPA(nn.Module):
         pred_emb_hat = self.predict(z_t, act_emb_hat)
         pred_loss_hat = (pred_emb_hat - tgt_emb).pow(2).mean()
         pred_loss = energy.mean() / energy.new_tensor(float(pred_emb.size(-1)))
-
-        # The ordinary/default ACA objective is already fully represented by
-        # the factual and counterfactual forwards above.  The two additional
-        # copies below are only needed by the optional loss-ratio split.  In
-        # the default ``encoder_scale: none`` mode, skip them entirely: they
-        # have no contribution to the loss and otherwise incur four extra
-        # predictor forwards plus parameter-freezing/autograd side effects.
         scale_mode = "none" if encoder_scale is None else str(encoder_scale).lower()
         if scale_mode in ("none", "null", "false", "0", "0.0"):
             aca_loss = F.relu(margin + pred_loss - pred_loss_hat)
@@ -668,17 +528,11 @@ class JEPA(nn.Module):
                 "pred_loss": pred_loss,
                 "pred_loss_hat": pred_loss_hat,
                 "aca_loss": aca_loss,
-                # Both recipients receive the same ordinary hinge in the
-                # default mode; expose aliases so the caller adds exactly one
-                # ACA term without entering the optional split path.
                 "aca_loss_pred": aca_loss,
                 "aca_loss_encoder": aca_loss,
             }
 
-        # Keep ACA's predictor/action-encoder gradient at its native scale,
-        # while exposing a separate encoder-only copy that can be rescaled.
-        # The predictor parameters are temporarily frozen for the latter;
-        # gradients with respect to z_t/tgt_emb remain live.
+
         act_emb_fact = (
             self.action_encoder(actions.detach())
             if self.action_encoder is not None else actions.detach()
@@ -708,8 +562,8 @@ class JEPA(nn.Module):
                 for p, flag in zip(m.parameters(), flags):
                     p.requires_grad_(flag)
 
-        # Predictor-side copy: detach visual endpoints so this branch cannot
-        # alter encoder gradients, but keep action/predictor parameters live.
+
+
         pred_fact_pred = self.predict(z_t.detach(), act_emb_fact)
         pred_imp_pred = self.predict(z_t.detach(), act_emb_imp)
         aca_loss_pred = F.relu(
@@ -717,9 +571,9 @@ class JEPA(nn.Module):
             + (pred_fact_pred - tgt_emb.detach()).pow(2).mean()
             - (pred_imp_pred - tgt_emb.detach()).pow(2).mean()
         )
-        # ``aca_loss`` remains the ordinary single ACA hinge.  The training
-        # step may optionally replace it with the split/encoder-scaled form;
-        # keeping this value native preserves the historical default.
+
+
+
         aca_loss = F.relu(margin + pred_loss - pred_loss_hat)
         return {
             "pred_emb": pred_emb,
@@ -731,13 +585,6 @@ class JEPA(nn.Module):
         }
 
     def action_normal_energy(self, z_t, actions, tgt_emb, create_graph=True):
-        """Action-Normal Equation regularizer.
-
-        For E(a)=1/2||P(z_t,a)-z_next||^2, penalize
-        ||dE/da||^2.  The action is detached only as the differentiation
-        variable; the resulting higher-order graph remains connected to the
-        encoder/predictor parameters through ``create_graph``.
-        """
         with torch.enable_grad():
             action_var = actions.detach().clone().requires_grad_(True)
             action_input = (
@@ -763,19 +610,11 @@ class JEPA(nn.Module):
         }
 
     def random_aca_energy(self, z_t, actions, tgt_emb, rho, margin=0.0):
-        """Random-direction ACA control with a radius-matched challenger.
-
-        For every factual action this draws ``u ~ Unif(S^(d_a-1))`` and
-        evaluates the ordinary ACA hinge against ``a + rho*u``.  As with the
-        historical ACA implementation, legal bounds are estimated from the
-        normalized actions in the current batch.  This is deliberately *not*
-        random shooting: no candidate is selected after looking at its energy.
-        """
         if rho <= 0:
             raise ValueError("random ACA requires rho > 0")
-        # The action horizon is one in the aligned experiments.  Keeping the
-        # last dimension separate also gives each action in a longer history
-        # its own isotropic direction, matching the per-action definition.
+
+
+
         direction = torch.randn_like(actions)
         direction = direction / direction.norm(dim=-1, keepdim=True).clamp_min(1e-8)
         lo = actions.detach().amin(dim=(0, 1), keepdim=True)
@@ -804,12 +643,6 @@ class JEPA(nn.Module):
         }
 
     def action_energy_gradient_penalty(self, z_t, actions, tgt_emb, rho, create_graph=True):
-        """Exact first-order control: ``rho * E[||grad_a E(a)||_2]``.
-
-        ``E`` is the per-transition mean squared latent prediction error.  In
-        contrast to :meth:`action_normal_energy`, this is an L2 norm rather
-        than a squared norm, which is the specified small-radius ACA limit.
-        """
         if rho <= 0:
             raise ValueError("gradient penalty requires rho > 0")
         with torch.enable_grad():
@@ -841,19 +674,6 @@ class JEPA(nn.Module):
     def counterfactual_only_action_energy(
         self, z_t, actions, tgt_emb, rho, noise_scale=0.0
     ):
-        """Optimize only the native ACA counterfactual's transition energy.
-
-        ``hat_a`` is mined exactly as in ordinary gradient ACA: a fixed-rho
-        negative action-energy step from the logged action.  Unlike ordinary
-        ACA, the factual energy and parent--challenger hinge are *not* part of
-        the training objective.  The returned ``counterfactual_loss`` is
-
-            E(z_t, hat_a, z_{t+1}).
-
-        This deliberately tests the reverse-ACA hypothesis that making the
-        nearby lower-energy direction easy to descend is more useful for
-        gradient planning than making the factual action a sharp minimum.
-        """
         if rho <= 0:
             raise ValueError("counterfactual-only ACA requires rho > 0")
         with torch.enable_grad():
@@ -894,14 +714,6 @@ class JEPA(nn.Module):
         self, known_emb, actions, target_emb, forward, rho,
         noise_scale=0.0, margin=0.0,
     ):
-        """BiACA for masked action-labelled endpoint completion.
-
-        ``forward`` selects the endpoint that was masked for each item.  The
-        same selection controls both factual and counterfactual energies, so
-        an action must be optimal for the particular forward *or* reverse
-        edge-completion task sampled for that transition.  The reverse branch
-        receives the logged action itself, never its negation.
-        """
         if not getattr(self.predictor, "is_endpoint_completion", False):
             raise TypeError(
                 "bidirectional_adversarial_action_energy requires "
@@ -943,13 +755,6 @@ class JEPA(nn.Module):
         self, z_t, actions, tgt_emb, rho, max_steps=20, step_size=None,
         grad_tol=1e-5, num_restarts=4, margin=0.0,
     ):
-        """Convergent ACA: penalize the gap to the local energy minimum.
-
-        The detached inner solve minimizes E(a) over the legal action range
-        intersected with the *joint* L2 rho-ball around the factual action.
-        It retains every iterate (including a_t), then the outer objective
-        evaluates the deepest discovered point once: relu(E(a_t)-E(a_star)).
-        """
         if rho <= 0:
             raise ValueError("Convergent ACA requires rho > 0")
         B, T, D_act = actions.shape
@@ -1025,20 +830,6 @@ class JEPA(nn.Module):
         n_iters: int = 3,
         margin: float = 0.0,
     ):
-        """Planner-Consistent ACA (PC-ACA).
-
-        Training and planning share the same best-response operator:
-            BR_Θ(z, y; Q) = argmin_{A∈Q} E_Θ(z, A, y)
-
-        Training : Q = rho-ball around a_t, y = z_{t+1}
-                   -> find the action that best fools the predictor -> reject it
-        Planning : Q = full action space, y = z_goal
-                   -> find the action that best achieves the goal -> execute it
-
-        The adversary is the actual downstream search procedure (random
-        shooting or mini-CEM), so whatever planning exploits at test time is
-        exactly what training counteracts.
-        """
         B, T, D_act = actions.shape
 
         with torch.no_grad():
