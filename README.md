@@ -10,24 +10,6 @@ The supported environments are **OGBench-Cube**, **Reacher**, **Push-T**, and
 **TwoRoom**. Training uses a single CUDA GPU. Evaluation uses the standard CEM
 planner, or the fixed-manifest strict protocol described below.
 
-## TL;DR
-
-```bash
-# The reference checkout provides the environment used by the launchers.
-source /root/autodl-tmp/sensorimotor-world-model/.venv/bin/activate
-# Optional: the configs already use this path by default on the reference host.
-export EXTERNAL_DATA_ROOT=${EXTERNAL_DATA_ROOT:-/root//data/external}
-python experiments/train/generate_configs.py
-experiments/train/run.sh cube_full_inv_aca_w1_rho0p1_seed0
-experiments/eval/run.sh config/eval/full/cube.yaml \
-  results/cube_full_inv_aca_w1_rho0p1_seed0
-```
-
-If that path does not exist on your machine, activate any environment that
-contains this project's dependencies and set `EXTERNAL_DATA_ROOT` to your HDF5
-directory. The repository does not include a `pyproject.toml` or
-`requirements.txt`; the runtime is shared with the upstream
-sensorimotor-world-model checkout.
 
 ## Repository layout
 
@@ -114,8 +96,11 @@ The canonical configs use training seed `0`, one GPU, 10 epochs, `lr=1e-4`,
 zero ACA direction noise, ACA weight `1`, and rho in
 `{0.05, 0.1, 0.25, 0.5}`. A `seed=` override creates a non-canonical run.
 
-## Run the complete rho sweep
-
+## Quick Start: Run the complete rho sweep (recommend)
+We strongly recommend training ACA with the full rho sweep: we have observed
+substantial variation across devices even with fixed random seeds, and, in our
+tested fixed-seed settings, the sweep consistently identifies ACA configurations
+that outperform the corresponding baseline.
 There is one launcher for each environment/objective pair:
 
 ```bash
