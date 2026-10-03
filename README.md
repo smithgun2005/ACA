@@ -1,62 +1,213 @@
-# ACA experiments
+# Action-Consequence Alignment (ACA)
 
-This directory is a self-contained runner for the supported experiments. It
-contains SIG baseline, INV baseline, SIG+ACA and INV+ACA training only. All
-evaluation uses standard CEM (300 samples, 30 iterations, top-k 30, horizon 5,
-receding horizon 5, action block 5, goal offset 25 and budget 50).
+This repository contains the ACA training and planning experiments for the
+sensorimotor world model. ACA (Action-Consequence Alignment) aligns the action
+space with the consequence predicted by the world model: it searches for an
+action perturbation that makes a factual transition harder, then uses the
+resulting counterfactual transition in the alignment loss. The runner also
+supports the inverse-dynamics (INV) and SIGReg (SIG) baselines.
 
-Set `EXTERNAL_DATA_ROOT` to the directory containing the training/evaluation
-HDF5 files. The package includes default 5% episode-index files under
-`data/generated`; set `ACA_DATA_ROOT` to relocate them. The subset index defaults can be overridden with
-`CUBE_SUBSET_INDICES`, `REACHER_SUBSET_INDICES`, `PUSHT_SUBSET_INDICES` and
+The supported environments are **OGBench-Cube**, **Reacher**, **Push-T**, and
+**TwoRoom**. Training uses a single CUDA GPU. Evaluation uses the standard CEM
+planner, or the fixed-manifest strict protocol described below.
+
+## TL;DR
+
+```bash
+# The reference checkout provides the environment used by the launchers.
+source /root/autodl-tmp/sensorimotor-world-model/.venv/bin/activate
+# Optional: the configs already use this path by default on the reference host.
+export EXTERNAL_DATA_ROOT=${EXTERNAL_DATA_ROOT:-/root//data/external}
+python experiments/train/generate_configs.py
+experiments/train/run.sh cube_full_inv_aca_w1_rho0p1_seed0
+experiments/eval/run.sh config/eval/full/cube.yaml \
+  results/cube_full_inv_aca_w1_rho0p1_seed0
+```
+
+If that path does not exist on your machine, activate any environment that
+contains this project's dependencies and set `EXTERNAL_DATA_ROOT` to your HDF5
+directory. The repository does not include a `pyproject.toml` or
+`requirements.txt`; the runtime is shared with the upstream
+sensorimotor-world-model checkout.
+
+## Repository layout
+
+```text
+train.py, eval.py, jepa.py, module.py, utils.py  # model, training, planning
+config/train/                                     # base and dataset configs
+config/eval/                                      # standard and environment configs
+experiments/train/run.sh                          # train one generated config
+experiments/train/generate_configs.py             # generate canonical configs
+experiments/eval/run.sh                           # standard CEM evaluation
+experiments/sweeps/                                # complete rho sweeps
+scripts/run_strict.sh                             # fixed-manifest evaluation
+self_improving/                                   # mine -> replay -> retrain loops
+data/generated/                                   # checked-in 5% episode indices
+vendor/clear_lewm/                                # strict-evaluation adapter
+```
+
+Runs are written to `results/<subdir>` by default. Set `RUNS_ROOT` to relocate
+them.
+
+## Setup and data
+
+Set `EXTERNAL_DATA_ROOT` to a directory containing these training files:
+
+```text
+tworoom_train.h5
+reacher_train.h5
+pusht_expert_train.h5
+cube_single_expert_train.h5
+```
+
+Standard evaluation additionally needs `tworoom_eval.h5`, `reacher_eval.h5`,
+`pusht_expert_eval.h5`, and `cube_single_expert_eval.h5`. These LeWorldModel
+datasets are not checked into this repository. Dataset names in the configs must
+match the HDF5 filename stem.
+
+The checked-in 5% episode-index files are under `data/generated/`:
+
+```text
+cube_5pct/cube5pct_episodes.npy
+reacher_5pct/reacher5pct_episodes.npy
+pusht_5pct/pusht5pct_episodes.npy
+tworoom_5pct/tworoom5pct_train_episodes.npy
+```
+
+Set `ACA_DATA_ROOT` to relocate these files, or override one with
+`CUBE_SUBSET_INDICES`, `REACHER_SUBSET_INDICES`, `PUSHT_SUBSET_INDICES`, or
 `TWOROOM_SUBSET_INDICES`.
 
-Generate the canonical full-dataset sweep configs:
+## Train one model
+
+Generate the canonical full-dataset configs first:
 
 ```bash
 python experiments/train/generate_configs.py
 ```
 
-The launchers are listed in `experiments/SWEEP_SCRIPTS.md`. Every Cube,
-Reacher, PushT, and TwoRoom objective uses a baseline plus ACA weight `1` at
-rho `0.05`, `0.1`, `0.25`, and `0.5`, with training seed `0` and zero ACA
-direction noise. Both INV and SIG objectives are covered, and each launcher
-automatically evaluates after training.
+Configs are written to `experiments/train/generated/`. The naming dimensions
+are:
 
-Run evaluation with an environment config:
+| Dimension | Values |
+|---|---|
+| environment | `cube`, `reacher`, `pusht`, `tworoom` |
+| objective | `inv`, `sig` |
+| method | `baseline`, `aca_w1_rho0p05`, `aca_w1_rho0p1`, `aca_w1_rho0p25`, `aca_w1_rho0p5` |
+| training seed | `seed0` |
 
-```bash
-experiments/eval/run.sh config/eval/env/ogbcube.yaml /path/to/training/run
-```
-
-Strict evaluation uses the manifests under `config/strict_manifests/` and
-`scripts/evaluate_strict.py`. AMP, custom planners, and unrelated auxiliary
-losses are intentionally rejected.
-
-The old `self_improving/run.sh` performs one retraining round from an already
-collected HDF5 file. For the complete two-stage workflow use
-`self_improving/run_loop.sh`:
+Examples:
 
 ```bash
-self_improving/run_loop.sh cube CFG_NAME INITIAL_RUN SOURCE_H5 2 0.2 0.1 EPISODES.npy config/eval/ogbcube.yaml
+experiments/train/run.sh reacher_full_sig_baseline_seed0
+experiments/train/run.sh reacher_full_sig_aca_w1_rho0p25_seed0
 ```
 
-The loop is fixed to the legacy schedules (the `ROUNDS` argument must be `2`):
+`run.sh` accepts Hydra overrides after the config name:
 
-- Reacher: `5 + 5 + 15 = 25` epochs. The final 15-epoch stage resets AdamW,
-  uses a constant `lr=1e-4` with scheduler disabled, and trains on the union
-  of both replay rounds.
-- Cube/Cube-strict: `5 + 5 + 20 = 30` epochs. The final 20-epoch stage resets
-  AdamW, uses fixed `lr=1e-4` with scheduler disabled, and trains on the union
-  of both replay rounds.
+```bash
+RUNS_ROOT=/path/to/results experiments/train/run.sh \
+  cube_full_inv_aca_w1_rho0p1_seed0 \
+  seed=7 +trainer.deterministic=true +trainer.benchmark=false
+```
 
-Every stage initializes model weights from the previous checkpoint via
-`init_from_checkpoint` (optimizer state is intentionally reset). In the
-controlled self-improving experiment, all stages use fixed `lr=1e-4`, the
-same loader worker settings, and no ACA training loss; ACA is used only to
-mine actions for real-environment replay. Each round mines ACA actions from the
-current checkpoint, executes them in MuJoCo, and writes a real-transition HDF5
-file. The episode-index file is mandatory for both Reacher and Cube/Cube-strict,
-so a full `reacher_train.h5` never expands the 5% mining pool.
-An optional final argument evaluates every new checkpoint with the same
-standard CEM command used by `experiments/eval/run.sh`.
+The canonical configs use training seed `0`, one GPU, 10 epochs, `lr=1e-4`,
+zero ACA direction noise, ACA weight `1`, and rho in
+`{0.05, 0.1, 0.25, 0.5}`. A `seed=` override creates a non-canonical run.
+
+## Run the complete rho sweep
+
+There is one launcher for each environment/objective pair:
+
+```bash
+bash experiments/sweeps/run_cube_full_inv_aca_w1_rho_sweep_seed0.sh
+bash experiments/sweeps/run_cube_full_sig_aca_w1_rho_sweep_seed0.sh
+bash experiments/sweeps/run_reacher_full_inv_aca_w1_rho_sweep_seed0.sh
+bash experiments/sweeps/run_reacher_full_sig_aca_w1_rho_sweep_seed0.sh
+bash experiments/sweeps/run_pusht_full_inv_aca_w1_rho_sweep_seed0.sh
+bash experiments/sweeps/run_pusht_full_sig_aca_w1_rho_sweep_seed0.sh
+bash experiments/sweeps/run_tworoom_full_inv_aca_w1_rho_sweep_seed0.sh
+bash experiments/sweeps/run_tworoom_full_sig_aca_w1_rho_sweep_seed0.sh
+```
+
+Each launcher trains five matched variants (baseline plus four rho values),
+then evaluates each variant with five fixed planner seeds. The standard
+protocol's seed sweep is over planner seeds; the training seed stays `0`.
+Details and planner seeds are listed in `experiments/SWEEP_SCRIPTS.md`.
+
+Validate all referenced configs without starting training:
+
+```bash
+SWEEP_DRY_RUN=1 bash experiments/sweeps/run_cube_full_inv_aca_w1_rho_sweep_seed0.sh
+```
+
+Results are stored under:
+
+```text
+results/sweeps/<environment>_full_<objective>_aca_w1_rho_sweep_seed0/
+    training/<config-name>/
+    eval/standard/<label>/planner_seed_<seed>/summary.json
+```
+
+Set `CUDA_VISIBLE_DEVICES` to choose the GPU. The sweep scripts disable
+Weights & Biases logging and set deterministic runtime variables.
+
+## Evaluate an existing checkpoint
+
+The portable wrapper uses standard CEM with 300 samples, 30 optimization steps,
+top-k 30, horizon 5, receding horizon 5, action block 5, goal offset 25, and
+evaluation budget 50:
+
+```bash
+experiments/eval/run.sh config/eval/env/reacher.yaml \
+  /absolute/path/to/results/reacher_full_inv_baseline_seed0
+```
+
+Use `config/eval/full/{cube,reacher,pusht,tworoom}.yaml` for the full 100-task
+protocol. Append Hydra overrides such as `seed=53026` or `eval.num_eval=10`.
+
+## Strict fixed-manifest evaluation
+
+Strict evaluation checks the dataset fingerprint and evaluates exact fixed pairs.
+It is available for Cube and TwoRoom:
+
+```bash
+scripts/run_strict.sh cube \
+  /absolute/path/to/run /absolute/path/to/cube_single_expert_eval.h5 \
+  /absolute/path/to/output.json 42
+
+scripts/run_strict.sh tworoom \
+  /absolute/path/to/run /absolute/path/to/tworoom_eval.h5 \
+  /absolute/path/to/output.json 42
+```
+
+The wrapper selects manifests from `config/strict_manifests/`. TwoRoom strict
+evaluation must use the held-out `tworoom_eval.h5`; a full training HDF5 is
+rejected. The complete Cube and TwoRoom sweep launchers run strict evaluation
+after standard evaluation.
+
+## Self-improving ACA replay
+
+`self_improving/run_loop.sh` performs two rounds of ACA mining, MuJoCo
+execution, replay merging, and retraining. It requires a 5% episode-index file
+so that the mining pool remains fixed:
+
+```bash
+self_improving/run_loop.sh \
+  reacher CFG_NAME INITIAL_RUN_DIR SOURCE_TRAIN_H5 2 \
+  0.2 0.1 data/generated/reacher_5pct/reacher5pct_episodes.npy \
+  config/eval/full/reacher.yaml
+```
+
+Use `cube` or `cube-strict` for Cube. The aligned schedules are Reacher
+`5 + 5 + 15 = 25` epochs and Cube `5 + 5 + 20 = 30` epochs. The final stage
+trains on both replay rounds, resets AdamW, and uses constant `lr=1e-4`.
+`self_improving/run.sh` is the lower-level one-round command when a
+counterfactual HDF5 already exists.
+
+## Citation and provenance
+
+ACA extends the sensorimotor-world-model/LeWorldModel training stack. This
+repository focuses on ACA losses, counterfactual mining, sweep launchers, and
+evaluation adapters; consult the upstream sensorimotor-world-model project for
+the underlying world-model method and dataset provenance.
