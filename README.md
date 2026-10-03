@@ -1,7 +1,6 @@
 # Action-Consequence Alignment (ACA)
 
-This repository contains the ACA training and planning experiments for the
-sensorimotor world model. ACA (Action-Consequence Alignment) aligns the action
+This repository contains the ACA training and planning experiments. ACA (Action-Consequence Alignment) aligns the action
 space with the consequence predicted by the world model: it searches for an
 action perturbation that makes a factual transition harder, then uses the
 resulting counterfactual transition in the alignment loss. The runner also
