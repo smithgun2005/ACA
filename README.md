@@ -74,7 +74,6 @@ are:
 |---|---|
 | environment | `cube`, `reacher`, `pusht`, `tworoom` |
 | objective | `inv`, `sig` |
-| method | `baseline`, `aca_w1_rho0p05`, `aca_w1_rho0p1`, `aca_w1_rho0p25`, `aca_w1_rho0p5` |
 | training seed | `seed0` |
 
 Examples:
