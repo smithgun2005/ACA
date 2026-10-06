@@ -149,4 +149,18 @@ trains on both replay rounds, resets AdamW, and uses constant `lr=1e-4`.
 counterfactual HDF5 already exists.
 
 ## Citation and provenance
-This codebase builds on [SMWM](https://github.com/petr-ivashkov/sensorimotor-world-model).
+This codebase builds on [SMWM](https://github.com/petr-ivashkov/sensorimotor-world-model).## Citation
+
+If you found this work interesting, you can cite:
+
+```bibtex
+@misc{wang12026actionconsequencealignmentreliableplanning,
+      title={Action-Consequence Alignment for Reliable Planning and Self-Improving in Latent World Models}, 
+      author={Jinping Wang1 and Zhiqiang Gao and Xiantong Zhen and Ling Shao},
+      year={2026},
+      eprint={2610.04539},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2610.04539}, 
+}
+```
