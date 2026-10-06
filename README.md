@@ -1,11 +1,7 @@
 # Action-Consequence Alignment (ACA)
 
-This repository contains the ACA training and planning experiments. ACA (Action-Consequence Alignment) aligns the action
-space with the consequence predicted by the world model: it searches for an
-action perturbation that makes a factual transition harder, then uses the
-resulting counterfactual transition in the alignment loss. The runner also
-supports the inverse-dynamics (INV) and SIGReg (SIG) baselines.
-
+The PyTorch implementation of Action-Consequence Alignment (ACA) 
+https://arxiv.org/abs/2610.04539
 The supported environments are **OGBench-Cube**, **Reacher**, **Push-T**, and
 **TwoRoom**. Training uses a single CUDA GPU. Evaluation uses the standard CEM
 planner, or the fixed-manifest strict protocol described below.
