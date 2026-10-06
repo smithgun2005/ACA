@@ -55,42 +55,6 @@ Set `ACA_DATA_ROOT` to relocate these files, or override one with
 `CUBE_SUBSET_INDICES`, `REACHER_SUBSET_INDICES`, `PUSHT_SUBSET_INDICES`, or
 `TWOROOM_SUBSET_INDICES`.
 
-## Train one model
-
-Generate the canonical full-dataset configs first:
-
-```bash
-python experiments/train/generate_configs.py
-```
-
-Configs are written to `experiments/train/generated/`. The naming dimensions
-are:
-
-| Dimension | Values |
-|---|---|
-| environment | `cube`, `reacher`, `pusht`, `tworoom` |
-| objective | `inv`, `sig` |
-| training seed | `seed0` |
-
-Examples:
-
-```bash
-experiments/train/run.sh reacher_full_sig_baseline_seed0
-experiments/train/run.sh reacher_full_sig_aca_w1_rho0p25_seed0
-```
-
-`run.sh` accepts Hydra overrides after the config name:
-
-```bash
-RUNS_ROOT=/path/to/results experiments/train/run.sh \
-  cube_full_inv_aca_w1_rho0p1_seed0 \
-  seed=7 +trainer.deterministic=true +trainer.benchmark=false
-```
-
-The canonical configs use training seed `0`, one GPU, 10 epochs, `lr=1e-4`,
-zero ACA direction noise, ACA weight `1`, and rho in
-`{0.05, 0.1, 0.25, 0.5}`. A `seed=` override creates a non-canonical run.
-
 ## Quick Start: Run the complete rho sweep (recommend)
 We strongly recommend training ACA with the full rho sweep: we have observed
 substantial variation across devices even with fixed random seeds, and, in our
