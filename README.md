@@ -149,8 +149,4 @@ trains on both replay rounds, resets AdamW, and uses constant `lr=1e-4`.
 counterfactual HDF5 already exists.
 
 ## Citation and provenance
-
-ACA extends the sensorimotor-world-model/LeWorldModel training stack. This
-repository focuses on ACA losses, counterfactual mining, sweep launchers, and
-evaluation adapters; consult the upstream sensorimotor-world-model project for
-the underlying world-model method and dataset provenance.
+This codebase builds on [SMWM]((https://github.com/petr-ivashkov/sensorimotor-world-model)).
