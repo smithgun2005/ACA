@@ -149,4 +149,4 @@ trains on both replay rounds, resets AdamW, and uses constant `lr=1e-4`.
 counterfactual HDF5 already exists.
 
 ## Citation and provenance
-This codebase builds on [SMWM]([https://github.com/petr-ivashkov/sensorimotor-world-model]).
+This codebase builds on [SMWM](https://github.com/petr-ivashkov/sensorimotor-world-model).
