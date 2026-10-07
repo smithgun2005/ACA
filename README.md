@@ -63,14 +63,14 @@ that outperform the corresponding baseline.
 There is one launcher for each environment/objective pair:
 
 ```bash
+bash experiments/sweeps/run_tworoom_full_inv_aca_w1_rho_sweep_seed0.sh
+bash experiments/sweeps/run_tworoom_full_sig_aca_w1_rho_sweep_seed0.sh
 bash experiments/sweeps/run_cube_full_inv_aca_w1_rho_sweep_seed0.sh
 bash experiments/sweeps/run_cube_full_sig_aca_w1_rho_sweep_seed0.sh
 bash experiments/sweeps/run_reacher_full_inv_aca_w1_rho_sweep_seed0.sh
 bash experiments/sweeps/run_reacher_full_sig_aca_w1_rho_sweep_seed0.sh
 bash experiments/sweeps/run_pusht_full_inv_aca_w1_rho_sweep_seed0.sh
 bash experiments/sweeps/run_pusht_full_sig_aca_w1_rho_sweep_seed0.sh
-bash experiments/sweeps/run_tworoom_full_inv_aca_w1_rho_sweep_seed0.sh
-bash experiments/sweeps/run_tworoom_full_sig_aca_w1_rho_sweep_seed0.sh
 ```
 
 Each launcher trains five matched variants (baseline plus four rho values),
